@@ -1,0 +1,15 @@
+# .gitignore for MacDV (Swift / macOS)
+
+.build/
+build/
+DerivedData/
+.swiftpm/
+*.xcodeproj
+*.xcworkspace
+xcuserdata/
+*.DS_Store
+*.swp
+*~
+*.dmg
+*.pkg
+.background/
