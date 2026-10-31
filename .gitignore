@@ -13,3 +13,9 @@ xcuserdata/
 *.dmg
 *.pkg
 .background/
+
+# Windows / Node / Electron
+node_modules/
+dist/
+*.log
+.npmrc

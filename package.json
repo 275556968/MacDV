@@ -1,0 +1,27 @@
+{
+  "name": "windv",
+  "productName": "WinDV",
+  "version": "1.0.0",
+  "description": "专为 Windows 打造的高清原生横屏抖音客户端 (1080P/4K超清·横屏精选·无广告·播放防休眠·摸鱼置顶)",
+  "main": "src/main/main.js",
+  "scripts": {
+    "start": "electron .",
+    "test": "electron scripts/test-app-e2e.js",
+    "pack": "electron-builder --dir",
+    "dist": "electron-builder"
+  },
+  "keywords": [
+    "douyin",
+    "tiktok",
+    "desktop",
+    "windows",
+    "landscape",
+    "player"
+  ],
+  "author": "WinDV Team",
+  "license": "MIT",
+  "devDependencies": {
+    "electron": "^33.4.11",
+    "electron-builder": "^26.18.0"
+  }
+}

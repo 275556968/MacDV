@@ -1,0 +1,236 @@
+.titlebar {
+    position: relative;
+    width: 100%;
+    height: 48px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 12px;
+    z-index: 100;
+    background: linear-gradient(to bottom, rgba(10, 10, 12, 0.85), rgba(10, 10, 12, 0.45), transparent);
+    transition: opacity 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.titlebar-drag-region {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    -webkit-app-region: drag;
+    pointer-events: auto;
+}
+
+.no-drag {
+    -webkit-app-region: no-drag;
+    position: relative;
+    z-index: 2;
+    display: flex;
+    align-items: center;
+}
+
+.titlebar-left {
+    gap: 16px;
+}
+
+.app-brand {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px;
+    background: rgba(0, 0, 0, 0.45);
+    backdrop-filter: blur(12px);
+    border-radius: var(--radius-pill);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.brand-icon {
+    width: 16px;
+    height: 16px;
+}
+
+.brand-name {
+    font-size: 14px;
+    font-weight: 800;
+    letter-spacing: -0.3px;
+    color: #fff;
+}
+
+.brand-tag {
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--brand-cyan);
+    background: rgba(37, 244, 238, 0.12);
+    padding: 1px 6px;
+    border-radius: var(--radius-pill);
+    border: 1px solid rgba(37, 244, 238, 0.3);
+}
+
+/* Channel Tabs (横屏精选 vs 综合推荐) */
+.channel-tabs {
+    display: flex;
+    align-items: center;
+    background: rgba(0, 0, 0, 0.5);
+    backdrop-filter: blur(12px);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-pill);
+    padding: 3px;
+    gap: 2px;
+}
+
+.channel-btn {
+    padding: 5px 12px;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    border-radius: var(--radius-pill);
+    transition: all 0.2s ease;
+}
+
+.channel-btn:hover {
+    color: #fff;
+    background: rgba(255, 255, 255, 0.08);
+}
+
+.channel-btn.active {
+    color: #fff;
+    background: rgba(255, 255, 255, 0.18);
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
+}
+
+/* Right Tool Buttons */
+.titlebar-right {
+    gap: 8px;
+}
+
+.tool-btn {
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    background: rgba(0, 0, 0, 0.45);
+    backdrop-filter: blur(12px);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    color: var(--text-secondary);
+    transition: all 0.2s ease;
+}
+
+.tool-btn svg {
+    width: 15px;
+    height: 15px;
+}
+
+.tool-btn:hover {
+    color: #fff;
+    background: rgba(255, 255, 255, 0.15);
+    border-color: rgba(255, 255, 255, 0.2);
+    transform: translateY(-1px);
+}
+
+.tool-btn.active {
+    color: var(--brand-purple);
+    background: rgba(168, 85, 247, 0.2);
+    border-color: rgba(168, 85, 247, 0.4);
+}
+
+/* Tooltips */
+.tool-btn .tool-tip {
+    position: absolute;
+    top: 38px;
+    left: 50%;
+    transform: translateX(-50%) translateY(-4px);
+    padding: 4px 8px;
+    font-size: 11px;
+    font-weight: 500;
+    color: #fff;
+    background: rgba(15, 15, 20, 0.92);
+    backdrop-filter: blur(8px);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    white-space: nowrap;
+    opacity: 0;
+    pointer-events: none;
+    transition: all 0.15s ease;
+    box-shadow: var(--shadow-sm);
+}
+
+.tool-btn:hover .tool-tip {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+}
+
+/* User Login Button */
+.login-btn {
+    width: auto;
+    padding: 4px 10px 4px 6px;
+    border-radius: var(--radius-pill);
+    gap: 6px;
+}
+
+.avatar-wrap {
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    overflow: hidden;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(255, 255, 255, 0.1);
+}
+
+.avatar-default {
+    width: 14px;
+    height: 14px;
+}
+
+.avatar-img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+.user-name-text {
+    font-size: 12px;
+    font-weight: 600;
+    max-width: 80px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* Windows Controls */
+.window-controls {
+    display: flex;
+    align-items: center;
+    margin-left: 8px;
+    gap: 2px;
+}
+
+.win-btn {
+    width: 38px;
+    height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-secondary);
+    border-radius: 4px;
+    transition: all 0.15s ease;
+}
+
+.win-btn svg {
+    width: 11px;
+    height: 11px;
+}
+
+.win-btn:hover {
+    color: #fff;
+    background: rgba(255, 255, 255, 0.12);
+}
+
+.win-close:hover {
+    background: #e81123 !important;
+    color: #fff !important;
+}

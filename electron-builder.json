@@ -1,0 +1,29 @@
+{
+  "appId": "com.windv.app",
+  "productName": "WinDV",
+  "copyright": "Copyright © 2026 WinDV Team",
+  "directories": {
+    "output": "dist"
+  },
+  "files": [
+    "package.json",
+    "assets/**/*",
+    "src/**/*"
+  ],
+  "win": {
+    "target": [
+      {
+        "target": "dir",
+        "arch": ["x64"]
+      },
+      {
+        "target": "portable",
+        "arch": ["x64"]
+      }
+    ],
+    "icon": "assets/icon.ico"
+  },
+  "portable": {
+    "artifactName": "WinDV-${version}-Portable.exe"
+  }
+}
