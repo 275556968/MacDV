@@ -46,11 +46,38 @@ class AppController {
         this.initKeyboard();
         this.initSettingsModal();
 
+        // Proactively check engine status on startup
+        const initFeedIfReady = async () => {
+            try {
+                const status = await window.api?.engine?.getStatus();
+                if (status && status.isReady) {
+                    this.engineStatus.textContent = status.statusMessage || '引擎就绪，正在获取视频流...';
+                    this.loadFeed(true);
+                    window.loginModal?.checkStatus();
+                    return true;
+                }
+            } catch (e) {}
+            return false;
+        };
+
         // Engine ready listener
         window.api?.engine?.onEngineReady((data) => {
             this.engineStatus.textContent = data.statusMessage || '引擎就绪，正在获取视频流...';
             this.loadFeed(true);
             window.loginModal?.checkStatus();
+        });
+
+        // Trigger immediate check in case engine was already ready before renderer loaded
+        initFeedIfReady().then(ready => {
+            if (!ready) {
+                setTimeout(async () => {
+                    const ok = await initFeedIfReady();
+                    if (!ok && this.items.length === 0) {
+                        this.engineStatus.textContent = '初始化等待中，若长时间未响应请点击刷新';
+                        this.btnRetryFeed?.classList.remove('hidden');
+                    }
+                }, 4000);
+            }
         });
 
         // Retry button

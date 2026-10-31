@@ -37,6 +37,7 @@ app.whenReady().then(async () => {
     ipcMain.handle('window:setAlwaysOnTop', (e, f) => !!f);
     ipcMain.handle('window:setOpacity', (e, o) => Number(o));
     ipcMain.handle('window:setFullScreen', (e, f) => !!f);
+    ipcMain.handle('engine:getStatus', () => engine.getStatus());
     ipcMain.handle('engine:switchChannel', async (e, k) => {
         await engine.switchChannel(k);
         return { statusMessage: engine.statusMessage, currentChannel: engine.currentChannel };

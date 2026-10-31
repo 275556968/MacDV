@@ -97,19 +97,51 @@ class DouyinEngine {
 
             // Wait 2.5s for initial JS runtime scripts (ttwid, acrawler) to settle
             setTimeout(async () => {
-                this.isReady = true;
-                this.statusMessage = '引擎就绪';
-                await this.checkLoginStatus();
-                this.resolveReadyCallbacks();
+                await this.markReady();
             }, 2500);
         });
+
+        // Safety fallback timer: if did-finish-load hasn't fired in 6 seconds, mark ready anyway
+        setTimeout(async () => {
+            if (!this.isReady) {
+                console.log('⏰ [DouyinEngine] Settle timeout reached, marking engine ready');
+                await this.markReady();
+            }
+        }, 6000);
 
         webContents.on('did-fail-load', (event, errorCode, errorDescription) => {
             this.statusMessage = `加载异常: ${errorDescription} (${errorCode})`;
             console.error('⚠️ [DouyinEngine] Fail load:', errorDescription);
+            // Allow retry even if load failed
+            this.resolveReadyCallbacks();
         });
 
         await this.loadChannel(this.currentChannel);
+    }
+
+    async markReady() {
+        if (this.isReady) return;
+        this.isReady = true;
+        this.statusMessage = '引擎就绪';
+        await this.checkLoginStatus();
+        this.resolveReadyCallbacks();
+    }
+
+    getStatus() {
+        return {
+            isReady: this.isReady,
+            isLoading: this.isLoading,
+            isLoggedIn: this.isLoggedIn,
+            statusMessage: this.statusMessage,
+            currentChannel: this.currentChannel
+        };
+    }
+
+    destroy() {
+        if (this.engineWin && !this.engineWin.isDestroyed()) {
+            this.engineWin.destroy();
+            this.engineWin = null;
+        }
     }
 
     resolveReadyCallbacks() {
@@ -131,7 +163,11 @@ class DouyinEngine {
         const channel = CHANNELS[channelKey] || CHANNELS.jingxuan;
         this.statusMessage = `正在载入${channel.name}...`;
         if (this.engineWin) {
-            await this.engineWin.loadURL(channel.url);
+            try {
+                await this.engineWin.loadURL(channel.url);
+            } catch (err) {
+                console.warn('⚠️ [DouyinEngine] loadURL note:', err.message);
+            }
         }
     }
 

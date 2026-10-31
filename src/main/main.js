@@ -19,7 +19,10 @@ if (!gotLock) {
     app.on('second-instance', () => {
         if (mainWindow) {
             if (mainWindow.isMinimized()) mainWindow.restore();
+            mainWindow.show();
             mainWindow.focus();
+        } else {
+            createMainWindow();
         }
     });
 }
@@ -32,7 +35,8 @@ function createMainWindow() {
         minHeight: 450,
         frame: false,
         backgroundColor: '#0a0a0c',
-        icon: path.join(__dirname, '../../assets/icon.ico'),
+        show: true,
+        icon: path.join(__dirname, '../../Assets/icon.ico'),
         webPreferences: {
             preload: path.join(__dirname, '../preload/preload.js'),
             contextIsolation: true,
@@ -42,6 +46,13 @@ function createMainWindow() {
     });
 
     mainWindow.loadFile(path.join(__dirname, '../renderer/index.html'));
+
+    mainWindow.once('ready-to-show', () => {
+        if (mainWindow) {
+            mainWindow.show();
+            mainWindow.focus();
+        }
+    });
 
     mainWindow.on('maximize', () => {
         mainWindow.webContents.send('window:maximized-change', true);
@@ -61,11 +72,13 @@ function createMainWindow() {
 
     mainWindow.on('closed', () => {
         mainWindow = null;
-        if (loginWindow) {
+        if (loginWindow && !loginWindow.isDestroyed()) {
             loginWindow.destroy();
             loginWindow = null;
         }
+        engine.destroy();
         sleepPreventer.release();
+        app.quit();
     });
 }
 
@@ -157,6 +170,10 @@ ipcMain.handle('window:setFullScreen', (event, flag) => {
 });
 
 // Engine Operations
+ipcMain.handle('engine:getStatus', () => {
+    return engine.getStatus();
+});
+
 ipcMain.handle('engine:switchChannel', async (event, channelKey) => {
     await engine.switchChannel(channelKey);
     return {

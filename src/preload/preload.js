@@ -17,6 +17,7 @@ contextBridge.exposeInMainWorld('api', {
         }
     },
     engine: {
+        getStatus: () => ipcRenderer.invoke('engine:getStatus'),
         switchChannel: (channelKey) => ipcRenderer.invoke('engine:switchChannel', channelKey),
         fetchFeed: (opts) => ipcRenderer.invoke('engine:fetchFeed', opts || {}),
         fetchComments: (opts) => ipcRenderer.invoke('engine:fetchComments', opts || {}),
