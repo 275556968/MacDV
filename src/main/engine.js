@@ -32,6 +32,24 @@ class DouyinEngine {
     async init() {
         if (this.engineWin) return;
 
+        // Intercept and block non-standard protocol probes (bitbrowser://, adspower://, etc.)
+        session.defaultSession.webRequest.onBeforeRequest((details, callback) => {
+            const u = (details.url || '').toLowerCase();
+            const allowed = ['http:', 'https:', 'file:', 'data:', 'blob:', 'devtools:', 'ws:', 'wss:'];
+            try {
+                const parsed = new URL(u);
+                if (!allowed.includes(parsed.protocol)) {
+                    console.log('🛑 [DouyinEngine] Cancelled custom scheme request:', details.url);
+                    callback({ cancel: true });
+                    return;
+                }
+            } catch (e) {
+                callback({ cancel: true });
+                return;
+            }
+            callback({});
+        });
+
         // Setup webRequest rules to attach Referer and User-Agent
         session.defaultSession.webRequest.onBeforeSendHeaders((details, callback) => {
             const url = details.url.toLowerCase();
@@ -68,9 +86,17 @@ class DouyinEngine {
         });
 
         webContents.on('will-navigate', (event, url) => {
-            const u = url.toLowerCase();
-            if (BLOCKED_SCHEMES.some(s => u.startsWith(s + ':') || u.includes(s + '://'))) {
+            const u = (url || '').toLowerCase();
+            if (BLOCKED_SCHEMES.some(s => u.startsWith(s + ':') || u.includes(s + '://')) || (!u.startsWith('http://') && !u.startsWith('https://'))) {
                 console.log('🛑 [DouyinEngine] Blocked non-http navigation:', url);
+                event.preventDefault();
+            }
+        });
+
+        webContents.on('will-frame-navigate', (event) => {
+            const u = (event.url || '').toLowerCase();
+            if (BLOCKED_SCHEMES.some(s => u.startsWith(s + ':') || u.includes(s + '://')) || (!u.startsWith('http://') && !u.startsWith('https://') && !u.startsWith('data:') && !u.startsWith('blob:'))) {
+                console.log('🛑 [DouyinEngine] Blocked iframe non-http navigation:', event.url);
                 event.preventDefault();
             }
         });

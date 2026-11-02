@@ -76,6 +76,8 @@ app.whenReady().then(async () => {
                     const app = window.app;
                     return {
                         itemCount: app?.items?.length || 0,
+                        isLoading: app?.isLoading || false,
+                        engineStatus: document.getElementById('engine-status')?.textContent || '',
                         currentIndex: app?.currentIndex || 0,
                         hasVideoSrc: !!(player && player.src),
                         videoSrc: player?.src || '',
@@ -88,7 +90,7 @@ app.whenReady().then(async () => {
                 })()
             `);
 
-            console.log(`[E2E Test] Status check: items=${state.itemCount}, hasSrc=${state.hasVideoSrc}, dur=${state.videoDuration.toFixed(1)}s, author="${state.authorName}", quality="${state.qualityBadge}"`);
+            console.log(`[E2E Test] Status check: items=${state.itemCount}, loading=${state.isLoading}, status="${state.engineStatus}", hasSrc=${state.hasVideoSrc}, dur=${state.videoDuration.toFixed(1)}s, author="${state.authorName}"`);
 
             if (state.itemCount > 0 && state.hasVideoSrc && state.videoDuration > 0) {
                 console.log('✅ [E2E Test] Verified: Video feed loaded and player started successfully!');
@@ -105,6 +107,7 @@ app.whenReady().then(async () => {
         win.destroy();
         app.quit();
         process.exit(1);
+        return;
     }
 
     // Test Next Video switching

@@ -4,6 +4,32 @@ const path = require('path');
 // Disable Electron's default application menu entirely
 Menu.setApplicationMenu(null);
 
+// Global protection: intercept and neutralize any custom protocol schemes (such as bitbrowser://, adspower://, etc.)
+// probed by Douyin's web anti-bot scripts, preventing Windows OS from popping up "无法打开此 bitbrowser 链接"
+app.on('web-contents-created', (event, contents) => {
+    contents.on('will-navigate', (e, navUrl) => {
+        const u = (navUrl || '').toLowerCase();
+        if (!u.startsWith('http://') && !u.startsWith('https://') && !u.startsWith('file:') && !u.startsWith('data:') && !u.startsWith('blob:')) {
+            e.preventDefault();
+        }
+    });
+
+    contents.on('will-frame-navigate', (e) => {
+        const u = (e.url || '').toLowerCase();
+        if (!u.startsWith('http://') && !u.startsWith('https://') && !u.startsWith('file:') && !u.startsWith('data:') && !u.startsWith('blob:')) {
+            e.preventDefault();
+        }
+    });
+
+    contents.setWindowOpenHandler((details) => {
+        const u = (details.url || '').toLowerCase();
+        if (!u.startsWith('http://') && !u.startsWith('https://')) {
+            return { action: 'deny' };
+        }
+        return { action: 'deny' };
+    });
+});
+
 // Allow autoplay with sound without requiring user interaction
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
 app.commandLine.appendSwitch('disable-features', 'PreloadMediaEngagementData,AutoplayIgnoreWebAudio');
