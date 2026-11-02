@@ -11,9 +11,11 @@ class AppController {
         this.idleTimer = null;
         this.isIdle = false;
 
-        // Right-click long-press fast forward (2.0X)
+        // Long-press fast forward (2.0X - Mouse Right Button & ArrowRight key)
         this.isFastForwarding = false;
         this.rightPressTimer = null;
+        this.arrowRightTimer = null;
+        this.fastForwardSource = null;
         this.wasPausedBeforeFastForward = false;
         this.speedHud = null;
 
@@ -249,30 +251,41 @@ class AppController {
                 e.preventDefault();
                 clearTimeout(this.rightPressTimer);
                 this.rightPressTimer = setTimeout(() => {
-                    this.startFastForward();
-                }, 150);
+                    this.startFastForward('mouse');
+                }, 120);
             }
         });
 
-        const cancelFastForward = (e) => {
-            if (e && e.button !== undefined && e.button !== 2 && !this.isFastForwarding) {
-                return;
-            }
+        const cancelMouseFastForward = (e) => {
             clearTimeout(this.rightPressTimer);
-            if (this.isFastForwarding) {
+            if (this.isFastForwarding && this.fastForwardSource === 'mouse') {
                 this.stopFastForward();
             }
         };
 
-        window.addEventListener('mouseup', cancelFastForward);
-        window.addEventListener('pointerup', cancelFastForward);
-        window.addEventListener('pointercancel', cancelFastForward);
-        window.addEventListener('blur', cancelFastForward);
+        window.addEventListener('mouseup', cancelMouseFastForward);
+        window.addEventListener('pointerup', cancelMouseFastForward);
+        window.addEventListener('pointercancel', cancelMouseFastForward);
+        window.addEventListener('blur', () => {
+            clearTimeout(this.rightPressTimer);
+            clearTimeout(this.arrowRightTimer);
+            if (this.isFastForwarding) {
+                this.stopFastForward();
+            }
+        });
+
+        // Safety release if right mouse button was let go during mouse movement
+        window.addEventListener('mousemove', (e) => {
+            if (this.isFastForwarding && this.fastForwardSource === 'mouse' && (e.buttons & 2) === 0) {
+                cancelMouseFastForward(e);
+            }
+        });
     }
 
-    startFastForward() {
+    startFastForward(source = 'general') {
         if (this.isFastForwarding) return;
         this.isFastForwarding = true;
+        this.fastForwardSource = source;
 
         const video = window.videoPlayer?.video;
         this.wasPausedBeforeFastForward = video ? video.paused : false;
@@ -299,6 +312,7 @@ class AppController {
     stopFastForward() {
         if (!this.isFastForwarding) return;
         this.isFastForwarding = false;
+        this.fastForwardSource = null;
 
         // Restore 1.0X normal playback
         window.videoPlayer?.setPlaybackRate(1.0);
@@ -385,15 +399,28 @@ class AppController {
 
             const step = window.settingsManager.get('seekStepSeconds') || 10;
 
+            if (e.code === 'ArrowRight') {
+                e.preventDefault();
+                if (e.repeat) {
+                    if (!this.isFastForwarding) {
+                        clearTimeout(this.arrowRightTimer);
+                        this.startFastForward('keyboard');
+                    }
+                    return;
+                }
+
+                clearTimeout(this.arrowRightTimer);
+                this.arrowRightTimer = setTimeout(() => {
+                    this.startFastForward('keyboard');
+                }, 180);
+                return;
+            }
+
             switch (e.code) {
                 case 'Space':
                     e.preventDefault();
                     window.videoPlayer?.togglePlay();
                     this.showControls();
-                    break;
-                case 'ArrowRight':
-                    e.preventDefault();
-                    window.videoPlayer?.seekDelta(step);
                     break;
                 case 'ArrowLeft':
                     e.preventDefault();
@@ -451,6 +478,27 @@ class AppController {
                         this.toggleFullScreen();
                     }
                     break;
+            }
+        });
+
+        // Keyup listener: detect release of ArrowRight (tap vs long-press)
+        window.addEventListener('keyup', (e) => {
+            if (['INPUT', 'TEXTAREA'].includes(document.activeElement?.tagName)) {
+                return;
+            }
+
+            if (e.code === 'ArrowRight') {
+                e.preventDefault();
+                clearTimeout(this.arrowRightTimer);
+
+                if (this.isFastForwarding && this.fastForwardSource === 'keyboard') {
+                    // Release long-press -> restore normal speed
+                    this.stopFastForward();
+                } else if (!this.isFastForwarding) {
+                    // Short tap -> seek delta forward
+                    const step = window.settingsManager.get('seekStepSeconds') || 10;
+                    window.videoPlayer?.seekDelta(step);
+                }
             }
         });
     }

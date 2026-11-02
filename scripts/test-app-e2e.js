@@ -241,6 +241,37 @@ app.whenReady().then(async () => {
     `);
     console.log(`✅ [E2E Test] 2X Fast Forward Released: isFF=${ffEndState.isFastForwarding}, rate=${ffEndState.playbackRate}`);
 
+    // Test Keyboard ArrowRight Long-Press 2X Fast Playback
+    console.log('[E2E Test] Testing Keyboard ArrowRight Long-Press 2X...');
+    await win.webContents.executeJavaScript(`
+        window.dispatchEvent(new KeyboardEvent('keydown', { code: 'ArrowRight', repeat: true }));
+    `);
+    const keyFFState = await win.webContents.executeJavaScript(`
+        (() => {
+            return {
+                isFastForwarding: window.app?.isFastForwarding,
+                source: window.app?.fastForwardSource,
+                rate: window.videoPlayer?.video?.playbackRate
+            };
+        })()
+    `);
+    console.log(`✅ [E2E Test] Keyboard ArrowRight 2X Active: isFF=${keyFFState.isFastForwarding}, source="${keyFFState.source}", rate=${keyFFState.rate}`);
+
+    // Test Keyboard ArrowRight Release
+    console.log('[E2E Test] Testing Keyboard ArrowRight Release...');
+    await win.webContents.executeJavaScript(`
+        window.dispatchEvent(new KeyboardEvent('keyup', { code: 'ArrowRight' }));
+    `);
+    const keyFFEndState = await win.webContents.executeJavaScript(`
+        (() => {
+            return {
+                isFastForwarding: window.app?.isFastForwarding,
+                rate: window.videoPlayer?.video?.playbackRate
+            };
+        })()
+    `);
+    console.log(`✅ [E2E Test] Keyboard ArrowRight Released: isFF=${keyFFEndState.isFastForwarding}, rate=${keyFFEndState.rate}`);
+
     console.log('\n🎉 =======================================================');
     console.log('🎉 ALL WIN-DV AUTOMATED END-TO-END TESTS PASSED PERFECTLY!');
     console.log('🎉 =======================================================\n');
