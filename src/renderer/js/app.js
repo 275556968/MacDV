@@ -6,7 +6,10 @@ class AppController {
         this.isPureMode = false;
         this.isFullScreen = false;
         this.isControlsVisible = true;
-        this.controlsHideTimer = null;
+
+        // Unified idle auto-hide (cursor + titlebar + overlays)
+        this.idleTimer = null;
+        this.isIdle = false;
 
         // Wheel gesture debounce
         this.scrollAccumulator = 0;
@@ -100,11 +103,11 @@ class AppController {
 
         // Window fullscreen listener
         window.api?.window?.onFullscreenChange((isFull) => {
-            this.isFullScreen = isFull;
-            if (window.settingsManager.get('autoPureInFullscreen')) {
-                this.setPureMode(isFull);
-            }
+            this.handleFullscreenChange(isFull);
         });
+
+        // Start initial idle timer
+        this.handleUserActivity();
     }
 
     initTitlebar() {
@@ -215,30 +218,61 @@ class AppController {
             }
         }, { passive: true });
 
-        // Auto-hide controls when mouse is inactive
-        window.addEventListener('mousemove', () => {
-            this.showControls();
-        });
+        // Auto-hide controls & cursor when mouse/user is inactive
+        window.addEventListener('mousemove', () => this.handleUserActivity());
+        window.addEventListener('pointerdown', () => this.handleUserActivity());
     }
 
     showControls() {
-        if (this.isPureMode) return;
-        this.titlebar?.classList.remove('hide-overlay');
-        this.overlayLayer?.classList.remove('hide-overlay');
-        this.isControlsVisible = true;
+        this.handleUserActivity();
+    }
 
-        clearTimeout(this.controlsHideTimer);
-        this.controlsHideTimer = setTimeout(() => {
-            if (!window.videoPlayer?.video.paused && !this.isPureMode) {
-                this.titlebar?.classList.add('hide-overlay');
-                this.overlayLayer?.classList.add('hide-overlay');
-                this.isControlsVisible = false;
-            }
-        }, 3500);
+    handleUserActivity() {
+        // Reveal mouse cursor if it was hidden
+        if (this.isIdle) {
+            this.isIdle = false;
+            document.body.classList.remove('cursor-hidden');
+        }
+
+        // Reveal UI chrome if not in pure mode
+        if (!this.isPureMode) {
+            this.titlebar?.classList.remove('hide-overlay');
+            this.overlayLayer?.classList.remove('hide-overlay');
+            this.isControlsVisible = true;
+        }
+
+        // Restart idle timer (2.5 seconds)
+        clearTimeout(this.idleTimer);
+        this.idleTimer = setTimeout(() => {
+            this.handleUserIdle();
+        }, 2500);
+    }
+
+    handleUserIdle() {
+        // Do not auto-hide if a dialog or drawer is open
+        const isInteractingWithDialog =
+            window.commentDrawer?.isOpen ||
+            !document.getElementById('login-modal')?.classList.contains('hidden') ||
+            !document.getElementById('settings-modal')?.classList.contains('hidden');
+
+        if (isInteractingWithDialog) return;
+
+        // Auto-hide mouse cursor
+        this.isIdle = true;
+        document.body.classList.add('cursor-hidden');
+
+        // Auto-hide UI chrome (titlebar and bottom overlay)
+        if (!this.isPureMode) {
+            this.titlebar?.classList.add('hide-overlay');
+            this.overlayLayer?.classList.add('hide-overlay');
+            this.isControlsVisible = false;
+        }
     }
 
     initKeyboard() {
         window.addEventListener('keydown', (e) => {
+            this.handleUserActivity();
+
             // If typing in input or textarea, ignore shortcuts
             if (['INPUT', 'TEXTAREA'].includes(document.activeElement?.tagName)) {
                 if (e.key === 'Escape') {
@@ -281,6 +315,7 @@ class AppController {
                     e.preventDefault();
                     window.videoPlayer?.toggleAspect();
                     break;
+                case 'F11':
                 case 'KeyF':
                     e.preventDefault();
                     this.toggleFullScreen();
@@ -455,6 +490,7 @@ class AppController {
 
         window.videoPlayer?.load(item.playUrl);
         window.videoOverlay?.render(item);
+        this.handleUserActivity();
 
         // Preload next batch if close to the end
         if (this.items.length - this.currentIndex <= 3 && !this.isLoading) {
@@ -504,8 +540,34 @@ class AppController {
     }
 
     async toggleFullScreen() {
-        const isFull = await window.api.window.setFullScreen(!this.isFullScreen);
+        const wantFull = !this.isFullScreen;
+        const isFull = await window.api.window.setFullScreen(wantFull);
+        this.handleFullscreenChange(isFull);
+    }
+
+    handleFullscreenChange(isFull) {
         this.isFullScreen = isFull;
+        document.body.classList.toggle('is-fullscreen', isFull);
+
+        const iconMax = document.getElementById('icon-max');
+        const iconRestore = document.getElementById('icon-restore');
+        const fsLabel = document.querySelector('#btn-fullscreen .action-count');
+
+        if (isFull) {
+            iconMax?.classList.add('hidden');
+            iconRestore?.classList.remove('hidden');
+            if (fsLabel) fsLabel.textContent = '退出';
+            this.showToast('🖥️ 已进入真全屏模式 (按 F 或 Esc 退出)');
+            // Quickly auto-hide overlays in fullscreen
+            clearTimeout(this.idleTimer);
+            this.idleTimer = setTimeout(() => this.handleUserIdle(), 1200);
+        } else {
+            iconMax?.classList.remove('hidden');
+            iconRestore?.classList.add('hidden');
+            if (fsLabel) fsLabel.textContent = '全屏';
+            this.showToast('已退出全屏模式');
+            this.handleUserActivity();
+        }
     }
 
     showToast(message) {

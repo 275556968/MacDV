@@ -1,5 +1,8 @@
-const { app, BrowserWindow, ipcMain, clipboard, shell } = require('electron');
+const { app, BrowserWindow, ipcMain, clipboard, shell, Menu } = require('electron');
 const path = require('path');
+
+// Disable Electron's default application menu entirely
+Menu.setApplicationMenu(null);
 
 // Allow autoplay with sound without requiring user interaction
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
@@ -34,6 +37,7 @@ function createMainWindow() {
         minWidth: 720,
         minHeight: 450,
         frame: false,
+        autoHideMenuBar: true,
         backgroundColor: '#0a0a0c',
         show: true,
         icon: path.join(__dirname, '../../Assets/icon.ico'),
@@ -44,6 +48,9 @@ function createMainWindow() {
             webSecurity: true
         }
     });
+
+    mainWindow.setMenu(null);
+    mainWindow.setMenuBarVisibility(false);
 
     mainWindow.loadFile(path.join(__dirname, '../renderer/index.html'));
 
@@ -163,10 +170,15 @@ ipcMain.handle('window:setOpacity', (event, opacity) => {
 
 ipcMain.handle('window:setFullScreen', (event, flag) => {
     if (mainWindow) {
-        mainWindow.setFullScreen(!!flag);
+        const target = (typeof flag === 'boolean') ? flag : !mainWindow.isFullScreen();
+        mainWindow.setFullScreen(target);
         return mainWindow.isFullScreen();
     }
     return false;
+});
+
+ipcMain.handle('window:isFullScreen', () => {
+    return mainWindow ? mainWindow.isFullScreen() : false;
 });
 
 // Engine Operations

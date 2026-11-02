@@ -9,6 +9,7 @@ contextBridge.exposeInMainWorld('api', {
         setAlwaysOnTop: (flag) => ipcRenderer.invoke('window:setAlwaysOnTop', flag),
         setOpacity: (val) => ipcRenderer.invoke('window:setOpacity', val),
         setFullScreen: (flag) => ipcRenderer.invoke('window:setFullScreen', flag),
+        isFullScreen: () => ipcRenderer.invoke('window:isFullScreen'),
         onMaximizedChange: (cb) => {
             ipcRenderer.on('window:maximized-change', (e, val) => cb(val));
         },

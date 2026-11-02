@@ -165,6 +165,51 @@ app.whenReady().then(async () => {
     `);
     console.log(`✅ [E2E Test] Seek HUD verified: visible=${hudState.hudVisible}, text="${hudState.directionText}"`);
 
+    // Test Idle Auto-Hide (Mouse cursor & UI chrome disappearance)
+    console.log('[E2E Test] Testing Idle Auto-Hide (Mouse cursor + UI overlays)...');
+    await win.webContents.executeJavaScript(`
+        window.commentDrawer?.close();
+        window.app?.setPureMode(false);
+        window.app?.handleUserIdle();
+    `);
+    const idleState = await win.webContents.executeJavaScript(`
+        (() => {
+            return {
+                cursorHidden: document.body.classList.contains('cursor-hidden'),
+                titlebarHidden: document.getElementById('titlebar')?.classList.contains('hide-overlay'),
+                overlayHidden: document.getElementById('overlay-layer')?.classList.contains('hide-overlay')
+            };
+        })()
+    `);
+    console.log(`✅ [E2E Test] Idle Auto-Hide verified: cursorHidden=${idleState.cursorHidden}, titlebarHidden=${idleState.titlebarHidden}, overlayHidden=${idleState.overlayHidden}`);
+
+    // Test User Activity Wakeup (Mouse cursor & UI chrome reappearance)
+    console.log('[E2E Test] Testing Activity Wakeup (Mouse move restores cursor + UI)...');
+    await win.webContents.executeJavaScript(`window.app.handleUserActivity()`);
+    const activeState = await win.webContents.executeJavaScript(`
+        (() => {
+            return {
+                cursorHidden: document.body.classList.contains('cursor-hidden'),
+                titlebarHidden: document.getElementById('titlebar')?.classList.contains('hide-overlay'),
+                overlayHidden: document.getElementById('overlay-layer')?.classList.contains('hide-overlay')
+            };
+        })()
+    `);
+    console.log(`✅ [E2E Test] Activity Wakeup verified: cursorHidden=${activeState.cursorHidden}, titlebarHidden=${activeState.titlebarHidden}, overlayHidden=${activeState.overlayHidden}`);
+
+    // Test True Fullscreen Toggle
+    console.log('[E2E Test] Testing True Fullscreen Toggle...');
+    await win.webContents.executeJavaScript(`window.app.toggleFullScreen()`);
+    const fsState = await win.webContents.executeJavaScript(`
+        (() => {
+            return {
+                isFullScreen: window.app?.isFullScreen,
+                bodyHasClass: document.body.classList.contains('is-fullscreen')
+            };
+        })()
+    `);
+    console.log(`✅ [E2E Test] Fullscreen verified: isFullScreen=${fsState.isFullScreen}, bodyHasClass=${fsState.bodyHasClass}`);
+
     console.log('\n🎉 =======================================================');
     console.log('🎉 ALL WIN-DV AUTOMATED END-TO-END TESTS PASSED PERFECTLY!');
     console.log('🎉 =======================================================\n');

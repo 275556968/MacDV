@@ -98,6 +98,7 @@
 .overlay-layer.hide-overlay {
     opacity: 0 !important;
     pointer-events: none !important;
+    visibility: hidden !important;
 }
 
 .bottom-gradient {

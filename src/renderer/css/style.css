@@ -40,6 +40,12 @@ body {
     -webkit-font-smoothing: antialiased;
 }
 
+/* Auto-hide cursor when idle */
+body.cursor-hidden,
+body.cursor-hidden * {
+    cursor: none !important;
+}
+
 .app-container {
     position: relative;
     width: 100%;
