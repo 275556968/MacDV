@@ -36,6 +36,7 @@ app.commandLine.appendSwitch('disable-features', 'PreloadMediaEngagementData,Aut
 
 const engine = require('./engine');
 const sleepPreventer = require('./sleep-preventer');
+const updater = require('./updater');
 
 let mainWindow = null;
 let loginWindow = null;
@@ -133,6 +134,16 @@ app.whenReady().then(async () => {
     } catch (err) {
         console.error('Failed to init engine:', err);
     }
+
+    // Quiet background update check (5s delay after startup)
+    setTimeout(async () => {
+        try {
+            const updateInfo = await updater.checkForUpdates(false);
+            if (updateInfo && updateInfo.hasUpdate && mainWindow && !mainWindow.isDestroyed()) {
+                mainWindow.webContents.send('updater:update-found', updateInfo);
+            }
+        } catch (e) {}
+    }, 5000);
 
     app.on('activate', () => {
         if (BrowserWindow.getAllWindows().length === 0) {
@@ -322,4 +333,29 @@ ipcMain.handle('shell:openExternal', (event, url) => {
     if (url && (url.startsWith('http://') || url.startsWith('https://'))) {
         shell.openExternal(url);
     }
+});
+
+// MARK: - Updater Operations
+ipcMain.handle('updater:check', async (event, manual) => {
+    return await updater.checkForUpdates(!!manual);
+});
+
+ipcMain.handle('updater:download', (event, { url, assetName }) => {
+    return updater.downloadUpdate(url, assetName, event.sender);
+});
+
+ipcMain.handle('updater:cancel', () => {
+    return updater.cancelDownload();
+});
+
+ipcMain.handle('updater:install', (event, filePath) => {
+    return updater.installAndRestart(filePath);
+});
+
+ipcMain.handle('updater:openFolder', (event, filePath) => {
+    return updater.openFolder(filePath);
+});
+
+ipcMain.handle('updater:getVersion', () => {
+    return updater.currentVersion;
 });

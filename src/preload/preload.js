@@ -42,5 +42,25 @@ contextBridge.exposeInMainWorld('api', {
     },
     shell: {
         openExternal: (url) => ipcRenderer.invoke('shell:openExternal', url)
+    },
+    updater: {
+        check: (manual) => ipcRenderer.invoke('updater:check', manual),
+        download: (opts) => ipcRenderer.invoke('updater:download', opts),
+        cancel: () => ipcRenderer.invoke('updater:cancel'),
+        install: (filePath) => ipcRenderer.invoke('updater:install', filePath),
+        openFolder: (filePath) => ipcRenderer.invoke('updater:openFolder', filePath),
+        getVersion: () => ipcRenderer.invoke('updater:getVersion'),
+        onUpdateFound: (cb) => {
+            ipcRenderer.on('updater:update-found', (e, data) => cb(data));
+        },
+        onDownloadProgress: (cb) => {
+            ipcRenderer.on('updater:download-progress', (e, data) => cb(data));
+        },
+        onDownloadComplete: (cb) => {
+            ipcRenderer.on('updater:download-complete', (e, data) => cb(data));
+        },
+        onDownloadError: (cb) => {
+            ipcRenderer.on('updater:download-error', (e, err) => cb(err));
+        }
     }
 });

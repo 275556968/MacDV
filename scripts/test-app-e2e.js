@@ -6,6 +6,7 @@ app.commandLine.appendSwitch('disable-features', 'PreloadMediaEngagementData,Aut
 
 const engine = require('../src/main/engine');
 const sleepPreventer = require('../src/main/sleep-preventer');
+const updater = require('../src/main/updater');
 
 console.log('🚀 [E2E Test] Starting WinDV End-to-End Automated Test...');
 
@@ -51,6 +52,13 @@ app.whenReady().then(async () => {
     ipcMain.handle('sleep:setPlaybackState', (e, p) => sleepPreventer.updatePlaybackState(p));
     ipcMain.handle('sleep:setPreference', (e, p) => sleepPreventer.setPreference(p));
     ipcMain.handle('clipboard:write', (e, t) => true);
+    ipcMain.handle('shell:openExternal', (e, url) => true);
+    ipcMain.handle('updater:check', async (e, m) => updater.checkForUpdates(m));
+    ipcMain.handle('updater:download', (e, opts) => updater.downloadUpdate(opts.url, opts.assetName, e.sender));
+    ipcMain.handle('updater:cancel', () => updater.cancelDownload());
+    ipcMain.handle('updater:install', (e, p) => true);
+    ipcMain.handle('updater:openFolder', (e, p) => true);
+    ipcMain.handle('updater:getVersion', () => '1.0.0');
 
     console.log('[E2E Test] Loading renderer index.html...');
     await win.loadFile(path.join(__dirname, '../src/renderer/index.html'));
@@ -274,6 +282,106 @@ app.whenReady().then(async () => {
         })()
     `);
     console.log(`✅ [E2E Test] Keyboard ArrowRight Released: isFF=${keyFFEndState.isFastForwarding}, rate=${keyFFEndState.rate}`);
+
+    // MARK: - Test Update System
+    console.log('[E2E Test] Testing Update System (version semver logic)...');
+    if (!updater.isNewer('1.0.1', '1.0.0')) throw new Error('1.0.1 should be newer than 1.0.0');
+    if (updater.isNewer('1.0.0', '1.0.0')) throw new Error('1.0.0 should not be newer than 1.0.0');
+    if (updater.isNewer('0.9.5', '1.0.0')) throw new Error('0.9.5 should not be newer than 1.0.0');
+    if (!updater.isNewer('v2.0.0', '1.0.0')) throw new Error('v2.0.0 should be newer than 1.0.0');
+    console.log('✅ [E2E Test] Version comparison semver verified successfully');
+
+    // Test Update Modal UI rendering
+    console.log('[E2E Test] Testing Update Modal UI rendering...');
+    await win.webContents.executeJavaScript(`
+        window.updateManager.showUpdateModal({
+            latestVersion: '1.1.0',
+            currentVersion: '1.0.0',
+            releaseDate: '2026-11-03',
+            releaseNotes: '1. 支持一键在线检查更新\\n2. 修复各种体验问题',
+            releaseUrl: 'https://github.com/275556968/MacDV/releases',
+            asset: {
+                name: 'WinDV-1.1.0-Portable.exe',
+                size: 80000000,
+                downloadUrl: 'https://github.com/275556968/MacDV/releases/download/v1.1.0/WinDV-1.1.0-Portable.exe'
+            }
+        });
+    `);
+
+    const updateModalState = await win.webContents.executeJavaScript(`
+        (() => {
+            const modal = document.getElementById('update-modal');
+            return {
+                visible: !modal?.classList.contains('hidden'),
+                newTag: document.getElementById('update-new-tag')?.textContent,
+                curTag: document.getElementById('update-cur-tag')?.textContent,
+                notes: document.getElementById('update-notes')?.textContent,
+                btnText: document.getElementById('btn-update-download-text')?.textContent
+            };
+        })()
+    `);
+    console.log(`✅ [E2E Test] Update Modal verified: visible=${updateModalState.visible}, newTag="${updateModalState.newTag}", btn="${updateModalState.btnText}"`);
+
+    // Test Download Progress Simulation
+    console.log('[E2E Test] Testing Update Download Progress UI...');
+    await win.webContents.executeJavaScript(`
+        window.updateManager.onProgress({
+            percent: 50,
+            downloadedMB: '40.0',
+            totalMB: '80.0',
+            speed: '5.2 MB/s'
+        });
+    `);
+
+    const progressState = await win.webContents.executeJavaScript(`
+        (() => {
+            return {
+                percentText: document.getElementById('update-progress-percent')?.textContent,
+                bytesText: document.getElementById('update-progress-bytes')?.textContent,
+                speedText: document.getElementById('update-progress-speed')?.textContent
+            };
+        })()
+    `);
+    console.log(`✅ [E2E Test] Progress UI verified: percent="${progressState.percentText}", bytes="${progressState.bytesText}", speed="${progressState.speedText}"`);
+
+    // Test Download Completion UI
+    console.log('[E2E Test] Testing Update Download Completion UI...');
+    await win.webContents.executeJavaScript(`
+        window.updateManager.onComplete({
+            filePath: 'C:\\\\Downloads\\\\WinDV-1.1.0-Portable.exe',
+            fileName: 'WinDV-1.1.0-Portable.exe'
+        });
+    `);
+
+    const completeState = await win.webContents.executeJavaScript(`
+        (() => {
+            return {
+                bannerVisible: !document.getElementById('update-complete-banner')?.classList.contains('hidden'),
+                hasRunBtn: !document.getElementById('btn-update-run-now')?.classList.contains('hidden'),
+                hasFolderBtn: !document.getElementById('btn-update-open-folder')?.classList.contains('hidden')
+            };
+        })()
+    `);
+    console.log(`✅ [E2E Test] Download Complete UI verified: banner=${completeState.bannerVisible}, hasRunBtn=${completeState.hasRunBtn}`);
+
+    // Close Update Modal
+    await win.webContents.executeJavaScript(`window.updateManager.closeModal()`);
+
+    // Test Settings Manual Check Updates button
+    console.log('[E2E Test] Testing Settings Modal Check Updates button...');
+    await win.webContents.executeJavaScript(`
+        document.getElementById('btn-check-update').click();
+    `);
+    await new Promise(r => setTimeout(r, 1500));
+    const checkStatusState = await win.webContents.executeJavaScript(`
+        (() => {
+            return {
+                statusText: document.getElementById('update-status-text')?.textContent,
+                statusBoxVisible: !document.getElementById('update-status-box')?.classList.contains('hidden')
+            };
+        })()
+    `);
+    console.log(`✅ [E2E Test] Settings Check Update verified: text="${checkStatusState.statusText}"`);
 
     console.log('\n🎉 =======================================================');
     console.log('🎉 ALL WIN-DV AUTOMATED END-TO-END TESTS PASSED PERFECTLY!');

@@ -9,7 +9,8 @@ class SettingsManager {
             autoPlaySound: true,
             preventDisplaySleep: true,
             seekStepSeconds: 10,
-            fillScreen: true
+            fillScreen: true,
+            autoCheckUpdate: true
         };
         this.state = this.load();
     }

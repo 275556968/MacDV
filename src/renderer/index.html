@@ -469,6 +469,93 @@
                             </tbody>
                         </table>
                     </div>
+
+                    <!-- Section 6: Version & Online Updates -->
+                    <div class="settings-section">
+                        <h3>版本与在线更新</h3>
+                        <div class="setting-item">
+                            <div class="setting-label">
+                                <span>WinDV 当前版本</span>
+                                <span class="setting-desc" id="current-version-text">v1.0.0 (Windows 原生横屏版)</span>
+                            </div>
+                            <button id="btn-check-update" class="settings-action-btn">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="btn-svg-icon">
+                                    <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"></path>
+                                </svg>
+                                <span id="btn-check-update-text">检查新版本</span>
+                            </button>
+                        </div>
+                        <div class="setting-item">
+                            <div class="setting-label">
+                                <span>启动时自动检查更新</span>
+                                <span class="setting-desc">开发者在 GitHub 发布新版时，启动后自动提醒更新</span>
+                            </div>
+                            <label class="switch">
+                                <input type="checkbox" id="setting-auto-check-update" checked>
+                                <span class="slider"></span>
+                            </label>
+                        </div>
+                        <div id="update-status-box" class="update-status-box hidden">
+                            <span id="update-status-text">已是最新版本</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- New Version Update Modal -->
+        <div id="update-modal" class="modal-overlay hidden">
+            <div class="modal-card update-card">
+                <div class="modal-header">
+                    <div class="update-header-title">
+                        <span class="update-rocket-icon">🚀</span>
+                        <div>
+                            <h2>发现新版本</h2>
+                            <div class="update-meta-line">
+                                <span id="update-new-tag" class="update-badge-new">v1.1.0</span>
+                                <span id="update-cur-tag" class="update-badge-cur">当前: v1.0.0</span>
+                                <span id="update-date" class="update-date-text">2026-11-03</span>
+                            </div>
+                        </div>
+                    </div>
+                    <button class="modal-close-btn" data-close="update-modal">✕</button>
+                </div>
+                <div class="modal-body update-body">
+                    <div class="update-section-title">更新说明</div>
+                    <div id="update-notes" class="update-notes-container"></div>
+
+                    <!-- Download Progress Container -->
+                    <div id="update-progress-wrap" class="update-progress-wrap hidden">
+                        <div class="update-progress-labels">
+                            <span id="update-progress-status">正在下载更新包...</span>
+                            <span id="update-progress-percent">0%</span>
+                        </div>
+                        <div class="update-progress-track">
+                            <div id="update-progress-bar" class="update-progress-bar" style="width: 0%;"></div>
+                        </div>
+                        <div class="update-progress-sub">
+                            <span id="update-progress-bytes">0 MB / 0 MB</span>
+                            <span id="update-progress-speed">0 MB/s</span>
+                        </div>
+                    </div>
+
+                    <!-- Completed Alert -->
+                    <div id="update-complete-banner" class="update-complete-banner hidden">
+                        <span class="complete-icon">🎉</span>
+                        <div class="complete-text">
+                            <div class="complete-title">新版本安装包下载完成！</div>
+                            <div id="update-file-path" class="complete-path">已保存到系统下载文件夹</div>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer update-footer">
+                    <button id="btn-update-later" class="btn-update-sub" data-close="update-modal">稍后提醒</button>
+                    <button id="btn-update-web" class="btn-update-sub">🌐 网页查看</button>
+                    <button id="btn-update-download" class="btn-update-main">
+                        <span id="btn-update-download-text">⚡ 立即更新</span>
+                    </button>
+                    <button id="btn-update-open-folder" class="btn-update-sub hidden">📁 打开文件目录</button>
+                    <button id="btn-update-run-now" class="btn-update-main hidden">🚀 立即运行新版本</button>
                 </div>
             </div>
         </div>
@@ -480,6 +567,7 @@
     <script src="js/overlay.js"></script>
     <script src="js/comment.js"></script>
     <script src="js/login.js"></script>
+    <script src="js/updater.js"></script>
     <script src="js/app.js"></script>
 </body>
 </html>

@@ -470,6 +470,8 @@ class AppController {
                     // Close open modals / drawer / exit fullscreen
                     if (window.commentDrawer?.isOpen) {
                         window.commentDrawer.close();
+                    } else if (!document.getElementById('update-modal')?.classList.contains('hidden')) {
+                        document.getElementById('update-modal')?.classList.add('hidden');
                     } else if (!document.getElementById('login-modal')?.classList.contains('hidden')) {
                         window.loginModal?.close();
                     } else if (!document.getElementById('settings-modal')?.classList.contains('hidden')) {
