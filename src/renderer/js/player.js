@@ -28,6 +28,7 @@ class VideoPlayerController {
         this.seekDebounceTimer = null;
         this.seekHudHideTimer = null;
         this.isScrubbing = false;
+        this.playbackRate = 1.0;
 
         // Track pending preload URL to prevent stale callbacks
         this._pendingUrl = null;
@@ -119,6 +120,7 @@ class VideoPlayerController {
         this._applyAspectToElement(this.video, fill);
 
         this.video.src = url;
+        this.video.playbackRate = this.playbackRate;
         const p = this.video.play();
         if (p !== undefined) {
             p.catch(err => {
@@ -190,6 +192,7 @@ class VideoPlayerController {
         const newActive = this.standby;
 
         // Start playback on new active
+        newActive.playbackRate = this.playbackRate;
         const p = newActive.play();
         if (p !== undefined) {
             p.catch(err => {
@@ -232,6 +235,20 @@ class VideoPlayerController {
         } else {
             this.video.pause();
         }
+    }
+
+    setPlaybackRate(rate) {
+        this.playbackRate = Number(rate) || 1.0;
+        if (this.video) {
+            this.video.playbackRate = this.playbackRate;
+        }
+        if (this.standby) {
+            this.standby.playbackRate = this.playbackRate;
+        }
+    }
+
+    getPlaybackRate() {
+        return this.video ? this.video.playbackRate : (this.playbackRate || 1.0);
     }
 
     toggleMute() {

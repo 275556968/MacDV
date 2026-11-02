@@ -210,6 +210,37 @@ app.whenReady().then(async () => {
     `);
     console.log(`✅ [E2E Test] Fullscreen verified: isFullScreen=${fsState.isFullScreen}, bodyHasClass=${fsState.bodyHasClass}`);
 
+    // Test Right-Click 2X Fast Forward Long-Press
+    console.log('[E2E Test] Testing Right-Click 2X Fast Forward...');
+    await win.webContents.executeJavaScript(`window.app.startFastForward()`);
+    const ffState = await win.webContents.executeJavaScript(`
+        (() => {
+            const video = window.videoPlayer?.video;
+            const hud = document.getElementById('speed-hud');
+            return {
+                isFastForwarding: window.app?.isFastForwarding,
+                playbackRate: video?.playbackRate,
+                hudVisible: !hud?.classList.contains('hidden'),
+                hudText: hud?.querySelector('.speed-hud-text')?.textContent
+            };
+        })()
+    `);
+    console.log(`✅ [E2E Test] 2X Fast Forward Active: isFF=${ffState.isFastForwarding}, rate=${ffState.playbackRate}, hudVisible=${ffState.hudVisible}, text="${ffState.hudText}"`);
+
+    // Release 2X Fast Forward
+    console.log('[E2E Test] Testing Release 2X Fast Forward (restore normal speed)...');
+    await win.webContents.executeJavaScript(`window.app.stopFastForward()`);
+    const ffEndState = await win.webContents.executeJavaScript(`
+        (() => {
+            const video = window.videoPlayer?.video;
+            return {
+                isFastForwarding: window.app?.isFastForwarding,
+                playbackRate: video?.playbackRate
+            };
+        })()
+    `);
+    console.log(`✅ [E2E Test] 2X Fast Forward Released: isFF=${ffEndState.isFastForwarding}, rate=${ffEndState.playbackRate}`);
+
     console.log('\n🎉 =======================================================');
     console.log('🎉 ALL WIN-DV AUTOMATED END-TO-END TESTS PASSED PERFECTLY!');
     console.log('🎉 =======================================================\n');

@@ -85,3 +85,61 @@
     0% { transform: translateX(-50%) translateY(-10px); opacity: 0; }
     100% { transform: translateX(-50%) translateY(0); opacity: 1; }
 }
+
+/* Fast-forward Speed HUD (Long press right click) */
+.speed-hud {
+    position: absolute;
+    top: 68px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 85;
+    pointer-events: none;
+    animation: speedPop 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+    transition: opacity 0.2s cubic-bezier(0.4, 0, 0.2, 1), transform 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+body.is-fullscreen .speed-hud {
+    top: 36px;
+}
+
+.speed-hud.hiding {
+    opacity: 0;
+    transform: translateX(-50%) translateY(-8px) scale(0.95);
+}
+
+.speed-hud-content {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 20px;
+    background: rgba(18, 18, 24, 0.85);
+    backdrop-filter: blur(20px);
+    border: 1px solid rgba(37, 244, 238, 0.4);
+    border-radius: var(--radius-pill);
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.6), 0 0 16px rgba(37, 244, 238, 0.25);
+}
+
+.speed-hud-icon {
+    width: 18px;
+    height: 18px;
+    color: var(--brand-cyan);
+    animation: speedPulse 0.75s ease-in-out infinite alternate;
+}
+
+.speed-hud-text {
+    font-size: 14px;
+    font-weight: 700;
+    color: #fff;
+    letter-spacing: 0.4px;
+    text-shadow: 0 0 8px rgba(37, 244, 238, 0.45);
+}
+
+@keyframes speedPulse {
+    0% { transform: scale(0.9); opacity: 0.8; }
+    100% { transform: scale(1.15); opacity: 1; }
+}
+
+@keyframes speedPop {
+    0% { transform: translateX(-50%) translateY(-12px) scale(0.85); opacity: 0; }
+    100% { transform: translateX(-50%) translateY(0) scale(1); opacity: 1; }
+}

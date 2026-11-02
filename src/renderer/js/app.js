@@ -11,6 +11,12 @@ class AppController {
         this.idleTimer = null;
         this.isIdle = false;
 
+        // Right-click long-press fast forward (2.0X)
+        this.isFastForwarding = false;
+        this.rightPressTimer = null;
+        this.wasPausedBeforeFastForward = false;
+        this.speedHud = null;
+
         // Wheel gesture debounce
         this.scrollAccumulator = 0;
         this.hasTriggeredGesture = false;
@@ -221,6 +227,100 @@ class AppController {
         // Auto-hide controls & cursor when mouse/user is inactive
         window.addEventListener('mousemove', () => this.handleUserActivity());
         window.addEventListener('pointerdown', () => this.handleUserActivity());
+
+        // Right-click long-press 2X fast forward
+        window.addEventListener('contextmenu', (e) => {
+            if (['INPUT', 'TEXTAREA'].includes(e.target.tagName)) return;
+            e.preventDefault();
+        });
+
+        window.addEventListener('mousedown', (e) => {
+            if (e.button === 2) { // Right mouse button
+                // Ignore right click on modals, comment drawer, buttons, inputs
+                if (e.target.closest('.modal-card') ||
+                    e.target.closest('#comment-drawer') ||
+                    e.target.closest('.titlebar') ||
+                    e.target.closest('.action-column') ||
+                    e.target.closest('.progress-container') ||
+                    ['INPUT', 'TEXTAREA', 'BUTTON'].includes(e.target.tagName)) {
+                    return;
+                }
+
+                e.preventDefault();
+                clearTimeout(this.rightPressTimer);
+                this.rightPressTimer = setTimeout(() => {
+                    this.startFastForward();
+                }, 150);
+            }
+        });
+
+        const cancelFastForward = (e) => {
+            if (e && e.button !== undefined && e.button !== 2 && !this.isFastForwarding) {
+                return;
+            }
+            clearTimeout(this.rightPressTimer);
+            if (this.isFastForwarding) {
+                this.stopFastForward();
+            }
+        };
+
+        window.addEventListener('mouseup', cancelFastForward);
+        window.addEventListener('pointerup', cancelFastForward);
+        window.addEventListener('pointercancel', cancelFastForward);
+        window.addEventListener('blur', cancelFastForward);
+    }
+
+    startFastForward() {
+        if (this.isFastForwarding) return;
+        this.isFastForwarding = true;
+
+        const video = window.videoPlayer?.video;
+        this.wasPausedBeforeFastForward = video ? video.paused : false;
+
+        // Accelerate to 2.0X
+        window.videoPlayer?.setPlaybackRate(2.0);
+
+        // If paused, temporarily play while holding
+        if (this.wasPausedBeforeFastForward && video) {
+            video.play().catch(() => {});
+        }
+
+        // Show 2.0X HUD
+        if (!this.speedHud) {
+            this.speedHud = document.getElementById('speed-hud');
+        }
+        if (this.speedHud) {
+            this.speedHud.classList.remove('hidden', 'hiding');
+        }
+
+        this.handleUserActivity();
+    }
+
+    stopFastForward() {
+        if (!this.isFastForwarding) return;
+        this.isFastForwarding = false;
+
+        // Restore 1.0X normal playback
+        window.videoPlayer?.setPlaybackRate(1.0);
+
+        // If video was originally paused, pause it again
+        if (this.wasPausedBeforeFastForward) {
+            window.videoPlayer?.video?.pause();
+            this.wasPausedBeforeFastForward = false;
+        }
+
+        // Hide HUD with smooth fade-out
+        if (this.speedHud) {
+            this.speedHud.classList.add('hiding');
+            setTimeout(() => {
+                if (!this.isFastForwarding && this.speedHud.classList.contains('hiding')) {
+                    this.speedHud.classList.add('hidden');
+                    this.speedHud.classList.remove('hiding');
+                }
+            }, 180);
+        }
+
+        this.handleUserActivity();
     }
 
     showControls() {
@@ -249,7 +349,9 @@ class AppController {
     }
 
     handleUserIdle() {
-        // Do not auto-hide if a dialog or drawer is open
+        // Do not auto-hide if fast-forwarding or if a dialog/drawer is open
+        if (this.isFastForwarding) return;
+
         const isInteractingWithDialog =
             window.commentDrawer?.isOpen ||
             !document.getElementById('login-modal')?.classList.contains('hidden') ||
