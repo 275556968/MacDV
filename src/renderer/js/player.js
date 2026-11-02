@@ -1,6 +1,15 @@
 class VideoPlayerController {
     constructor() {
-        this.video = document.getElementById('video-player');
+        this.videoA = document.getElementById('video-player');
+        this.videoB = document.getElementById('video-player-next');
+        // Active video is the one currently shown
+        this.video = this.videoA;
+        this.standby = this.videoB;
+
+        // Mark initial states
+        this.videoA.classList.add('video-player-active');
+        this.videoB.classList.add('video-player-standby');
+
         this.centerIndicator = document.getElementById('center-play-indicator');
         this.progressFilled = document.getElementById('progress-filled');
         this.progressBuffer = document.getElementById('progress-buffer');
@@ -20,41 +29,17 @@ class VideoPlayerController {
         this.seekHudHideTimer = null;
         this.isScrubbing = false;
 
+        // Track pending preload URL to prevent stale callbacks
+        this._pendingUrl = null;
+        this._switching = false;
+
         this.initEvents();
+        this.initEventsFor(this.videoA);
+        this.initEventsFor(this.videoB);
     }
 
+    /** Shared events (progress bar click, etc.) */
     initEvents() {
-        // Loop video when finished
-        this.video.addEventListener('ended', () => {
-            this.video.currentTime = 0;
-            this.video.play().catch(() => {});
-        });
-
-        // Time updates
-        this.video.addEventListener('timeupdate', () => {
-            if (!this.isScrubbing) {
-                this.updateProgress();
-            }
-        });
-
-        // Buffer progress
-        this.video.addEventListener('progress', () => {
-            this.updateBuffer();
-        });
-
-        // Play/Pause state updates
-        this.video.addEventListener('play', () => {
-            this.centerIndicator.classList.add('hidden');
-            window.api?.sleep?.setPlaybackState(true);
-        });
-
-        this.video.addEventListener('pause', () => {
-            if (!window.app?.isPureMode) {
-                this.centerIndicator.classList.remove('hidden');
-            }
-            window.api?.sleep?.setPlaybackState(false);
-        });
-
         // Click on progress bar to seek
         if (this.progressBarBg) {
             this.progressBarBg.addEventListener('click', (e) => {
@@ -68,16 +53,72 @@ class VideoPlayerController {
         }
     }
 
+    /** Per-video-element events */
+    initEventsFor(vid) {
+        // Loop video when finished
+        vid.addEventListener('ended', () => {
+            if (vid !== this.video) return;
+            vid.currentTime = 0;
+            vid.play().catch(() => {});
+        });
+
+        // Time updates
+        vid.addEventListener('timeupdate', () => {
+            if (vid !== this.video) return;
+            if (!this.isScrubbing) {
+                this.updateProgress();
+            }
+        });
+
+        // Buffer progress
+        vid.addEventListener('progress', () => {
+            if (vid !== this.video) return;
+            this.updateBuffer();
+        });
+
+        // Play/Pause state updates
+        vid.addEventListener('play', () => {
+            if (vid !== this.video) return;
+            this.centerIndicator.classList.add('hidden');
+            window.api?.sleep?.setPlaybackState(true);
+        });
+
+        vid.addEventListener('pause', () => {
+            if (vid !== this.video) return;
+            if (!window.app?.isPureMode) {
+                this.centerIndicator.classList.remove('hidden');
+            }
+            window.api?.sleep?.setPlaybackState(false);
+        });
+    }
+
+    /**
+     * Load and play a new video URL.
+     * Uses double-buffering: preload in the standby element, then swap.
+     */
     load(url) {
         if (!url) return;
-        this.video.src = url;
+
+        this._pendingUrl = url;
+
+        // If this is the very first video (no src on active), load directly
+        if (!this.video.src || this.video.src === '' || this.video.src === window.location.href) {
+            this._loadDirect(url);
+            return;
+        }
+
+        // Preload in standby element
+        this._preloadAndSwap(url);
+    }
+
+    /** Direct load into the active video (first video, no swap needed) */
+    _loadDirect(url) {
         const autoSound = window.settingsManager.get('autoPlaySound');
         this.video.muted = !autoSound;
-        
-        // Aspect ratio
         const fill = window.settingsManager.get('fillScreen');
-        this.applyAspect(fill);
+        this._applyAspectToElement(this.video, fill);
 
+        this.video.src = url;
         const p = this.video.play();
         if (p !== undefined) {
             p.catch(err => {
@@ -86,6 +127,103 @@ class VideoPlayerController {
                 this.video.play().catch(() => {});
             });
         }
+    }
+
+    /** Preload URL in standby video, then swap when ready */
+    _preloadAndSwap(url) {
+        if (this._switching) {
+            // If a swap is already in progress, just update the standby src
+            this.standby.src = url;
+            return;
+        }
+
+        this._switching = true;
+        const autoSound = window.settingsManager.get('autoPlaySound');
+        const fill = window.settingsManager.get('fillScreen');
+
+        // Configure standby
+        this.standby.muted = !autoSound;
+        this._applyAspectToElement(this.standby, fill);
+        this.standby.src = url;
+        this.standby.currentTime = 0;
+
+        const onReady = () => {
+            cleanup();
+            // Check this URL is still the one we want
+            if (this._pendingUrl !== url) {
+                this._switching = false;
+                return;
+            }
+            this._doSwap();
+        };
+
+        const onError = () => {
+            cleanup();
+            this._switching = false;
+            // Fallback: load directly into active
+            this._loadDirect(url);
+        };
+
+        // Timeout fallback — if preload takes too long, just swap anyway
+        const timeout = setTimeout(() => {
+            cleanup();
+            if (this._pendingUrl === url) {
+                this._doSwap();
+            } else {
+                this._switching = false;
+            }
+        }, 2000);
+
+        const cleanup = () => {
+            this.standby.removeEventListener('canplay', onReady);
+            this.standby.removeEventListener('error', onError);
+            clearTimeout(timeout);
+        };
+
+        this.standby.addEventListener('canplay', onReady, { once: true });
+        this.standby.addEventListener('error', onError, { once: true });
+    }
+
+    /** Swap active and standby video elements */
+    _doSwap() {
+        const oldActive = this.video;
+        const newActive = this.standby;
+
+        // Start playback on new active
+        const p = newActive.play();
+        if (p !== undefined) {
+            p.catch(err => {
+                console.log('Swap autoplay muted fallback:', err.message);
+                newActive.muted = true;
+                newActive.play().catch(() => {});
+            });
+        }
+
+        // CSS swap: new active comes to front
+        newActive.classList.remove('video-player-standby');
+        newActive.classList.add('video-player-active');
+        newActive.style.opacity = '1';
+
+        oldActive.classList.remove('video-player-active');
+        oldActive.classList.add('video-player-standby');
+        oldActive.style.opacity = '0';
+
+        // Pause and clear old video after a brief delay (let CSS transition settle)
+        setTimeout(() => {
+            oldActive.pause();
+            oldActive.removeAttribute('src');
+            oldActive.load(); // release resources
+        }, 300);
+
+        // Swap references
+        this.video = newActive;
+        this.standby = oldActive;
+
+        this._switching = false;
+
+        // Update progress display immediately
+        this.updateProgress();
+        this.updateBuffer();
     }
 
     togglePlay() {
@@ -110,11 +248,16 @@ class VideoPlayerController {
     }
 
     applyAspect(fill) {
+        this._applyAspectToElement(this.video, fill);
+        this._applyAspectToElement(this.standby, fill);
+    }
+
+    _applyAspectToElement(vid, fill) {
         if (fill) {
-            this.video.classList.remove('contain-mode');
+            vid.classList.remove('contain-mode');
             if (this.aspectLabel) this.aspectLabel.textContent = '铺满';
         } else {
-            this.video.classList.add('contain-mode');
+            vid.classList.add('contain-mode');
             if (this.aspectLabel) this.aspectLabel.textContent = '比例';
         }
     }

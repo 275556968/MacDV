@@ -1,8 +1,9 @@
 .video-container {
-    position: relative;
-    flex: 1;
+    position: absolute;
+    top: 0;
+    left: 0;
     width: 100%;
-    height: calc(100% - 48px);
+    height: 100%;
     background-color: #000;
     overflow: hidden;
 }
@@ -20,6 +21,17 @@
 
 .video-player.contain-mode {
     object-fit: contain;
+}
+
+/* Double-buffer: standby video sits behind active but hidden */
+.video-player-standby {
+    z-index: 0;
+    opacity: 0;
+    pointer-events: none;
+}
+
+.video-player-active {
+    z-index: 1;
 }
 
 /* Gesture click/tap layer */
