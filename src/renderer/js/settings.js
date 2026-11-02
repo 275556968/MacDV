@@ -10,7 +10,8 @@ class SettingsManager {
             preventDisplaySleep: true,
             seekStepSeconds: 10,
             fillScreen: true,
-            autoCheckUpdate: true
+            autoCheckUpdate: true,
+            exitPureOnEdge: true
         };
         this.state = this.load();
     }

@@ -4,6 +4,7 @@ class AppController {
         this.currentIndex = 0;
         this.isLoading = false;
         this.isPureMode = false;
+        this.pureModeActivatedAt = 0;
         this.isFullScreen = false;
         this.isControlsVisible = true;
 
@@ -226,8 +227,11 @@ class AppController {
             }
         }, { passive: true });
 
-        // Auto-hide controls & cursor when mouse/user is inactive
-        window.addEventListener('mousemove', () => this.handleUserActivity());
+        // Auto-hide controls & cursor when mouse/user is inactive, and detect screen edges
+        window.addEventListener('mousemove', (e) => {
+            this.handleUserActivity();
+            this.checkEdgeExitPureMode(e);
+        });
         window.addEventListener('pointerdown', () => this.handleUserActivity());
 
         // Right-click long-press 2X fast forward
@@ -553,6 +557,15 @@ class AppController {
             });
         }
 
+        // Exit pure on four screen edges
+        const chkEdgePure = document.getElementById('setting-exit-pure-edge');
+        if (chkEdgePure) {
+            chkEdgePure.checked = window.settingsManager.get('exitPureOnEdge');
+            chkEdgePure.addEventListener('change', () => {
+                window.settingsManager.set('exitPureOnEdge', chkEdgePure.checked);
+            });
+        }
+
         // High quality
         const chkHighQuality = document.getElementById('setting-high-quality');
         if (chkHighQuality) {
@@ -671,14 +684,40 @@ class AppController {
         }
     }
 
+    checkEdgeExitPureMode(e) {
+        if (!this.isPureMode) return;
+        if (!window.settingsManager.get('exitPureOnEdge')) return;
+
+        // Ignore edge detection immediately after entering pure mode (600ms cooldown)
+        if (this.pureModeActivatedAt && (Date.now() - this.pureModeActivatedAt < 600)) {
+            return;
+        }
+
+        const threshold = 22; // 22px margin from window edge
+        const x = e.clientX;
+        const y = e.clientY;
+        const w = window.innerWidth;
+        const h = window.innerHeight;
+
+        const isTop = y <= threshold;
+        const isBottom = y >= h - threshold;
+        const isLeft = x <= threshold;
+        const isRight = x >= w - threshold;
+
+        if (isTop || isBottom || isLeft || isRight) {
+            this.setPureMode(false);
+        }
+    }
+
     setPureMode(enabled) {
         this.isPureMode = enabled;
+        this.pureModeActivatedAt = Date.now();
         document.getElementById('btn-pure-mode')?.classList.toggle('active', enabled);
         if (enabled) {
             this.titlebar?.classList.add('hide-overlay');
             this.overlayLayer?.classList.add('hide-overlay');
             document.getElementById('center-play-indicator')?.classList.add('hidden');
-            this.showToast('✨ 纯净模式: 已开启 (按 H 恢复)');
+            this.showToast('✨ 纯净模式: 已开启 (碰触四边或按 H 恢复)');
         } else {
             this.titlebar?.classList.remove('hide-overlay');
             this.overlayLayer?.classList.remove('hide-overlay');

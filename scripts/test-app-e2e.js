@@ -146,6 +146,58 @@ app.whenReady().then(async () => {
     `);
     console.log(`✅ [E2E Test] Pure Mode verified: isPure=${pureState.isPureMode}, overlayHidden=${pureState.overlayHidden}`);
 
+    // Test Exit Pure Mode by moving mouse to Top Edge
+    console.log('[E2E Test] Testing Exit Pure Mode on Top Edge (clientY <= 22)...');
+    await new Promise(r => setTimeout(r, 700)); // wait for cooldown
+    await win.webContents.executeJavaScript(`
+        window.dispatchEvent(new MouseEvent('mousemove', { clientX: 400, clientY: 10 }));
+    `);
+    const topEdgeState = await win.webContents.executeJavaScript(`
+        (() => {
+            return {
+                isPureMode: window.app?.isPureMode,
+                overlayHidden: document.getElementById('overlay-layer')?.classList.contains('hide-overlay')
+            };
+        })()
+    `);
+    if (topEdgeState.isPureMode) throw new Error('Moving mouse to Top Edge should exit Pure Mode');
+    console.log(`✅ [E2E Test] Top Edge Exit verified: isPure=${topEdgeState.isPureMode}, overlayHidden=${topEdgeState.overlayHidden}`);
+
+    // Test Exit Pure Mode by moving mouse to Bottom Edge
+    console.log('[E2E Test] Testing Exit Pure Mode on Bottom Edge (clientY >= height - 22)...');
+    await win.webContents.executeJavaScript(`window.app.setPureMode(true)`);
+    await new Promise(r => setTimeout(r, 700));
+    await win.webContents.executeJavaScript(`
+        window.dispatchEvent(new MouseEvent('mousemove', { clientX: 400, clientY: window.innerHeight - 5 }));
+    `);
+    const bottomEdgeState = await win.webContents.executeJavaScript(`
+        (() => {
+            return {
+                isPureMode: window.app?.isPureMode,
+                overlayHidden: document.getElementById('overlay-layer')?.classList.contains('hide-overlay')
+            };
+        })()
+    `);
+    if (bottomEdgeState.isPureMode) throw new Error('Moving mouse to Bottom Edge should exit Pure Mode');
+    console.log(`✅ [E2E Test] Bottom Edge Exit verified: isPure=${bottomEdgeState.isPureMode}`);
+
+    // Test Exit Pure Mode by moving mouse to Right Edge
+    console.log('[E2E Test] Testing Exit Pure Mode on Right Edge (clientX >= width - 22)...');
+    await win.webContents.executeJavaScript(`window.app.setPureMode(true)`);
+    await new Promise(r => setTimeout(r, 700));
+    await win.webContents.executeJavaScript(`
+        window.dispatchEvent(new MouseEvent('mousemove', { clientX: window.innerWidth - 5, clientY: 300 }));
+    `);
+    const rightEdgeState = await win.webContents.executeJavaScript(`
+        (() => {
+            return {
+                isPureMode: window.app?.isPureMode
+            };
+        })()
+    `);
+    if (rightEdgeState.isPureMode) throw new Error('Moving mouse to Right Edge should exit Pure Mode');
+    console.log(`✅ [E2E Test] Right Edge Exit verified: isPure=${rightEdgeState.isPureMode}`);
+
     // Test Comment Drawer open and fetch
     console.log('[E2E Test] Testing Comment Drawer...');
     await win.webContents.executeJavaScript(`window.commentDrawer.open()`);
