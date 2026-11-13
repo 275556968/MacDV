@@ -28,7 +28,11 @@ class VideoPlayerController {
         this.seekDebounceTimer = null;
         this.seekHudHideTimer = null;
         this.isScrubbing = false;
-        this.playbackRate = 1.0;
+        // playbackRate = user-selected speed; activeRate = rate currently applied
+        // (may be the temporary 2.0X while fast-forwarding).
+        const savedRate = Number(window.settingsManager?.get('playbackSpeed'));
+        this.playbackRate = Number.isFinite(savedRate) && savedRate > 0 ? savedRate : 1.0;
+        this.activeRate = this.playbackRate;
 
         // Track pending preload URL to prevent stale callbacks
         this._pendingUrl = null;
@@ -96,31 +100,37 @@ class VideoPlayerController {
     /**
      * Load and play a new video URL.
      * Uses double-buffering: preload in the standby element, then swap.
+     * `fillOverride` lets the caller force cover/contain for this item
+     * (e.g. vertical videos opened from an author's space).
      */
-    load(url) {
+    load(url, fillOverride) {
         if (!url) return;
 
         this._pendingUrl = url;
 
         // If this is the very first video (no src on active), load directly
         if (!this.video.src || this.video.src === '' || this.video.src === window.location.href) {
-            this._loadDirect(url);
+            this._loadDirect(url, fillOverride);
             return;
         }
 
         // Preload in standby element
-        this._preloadAndSwap(url);
+        this._preloadAndSwap(url, fillOverride);
+    }
+
+    /** Resolve the aspect mode for a video, honouring a per-item override */
+    _resolveFill(fillOverride) {
+        return typeof fillOverride === 'boolean' ? fillOverride : window.settingsManager.get('fillScreen');
     }
 
     /** Direct load into the active video (first video, no swap needed) */
-    _loadDirect(url) {
+    _loadDirect(url, fillOverride) {
         const autoSound = window.settingsManager.get('autoPlaySound');
         this.video.muted = !autoSound;
-        const fill = window.settingsManager.get('fillScreen');
-        this._applyAspectToElement(this.video, fill);
+        this._applyAspectToElement(this.video, this._resolveFill(fillOverride));
 
         this.video.src = url;
-        this.video.playbackRate = this.playbackRate;
+        this.video.playbackRate = this.activeRate;
         const p = this.video.play();
         if (p !== undefined) {
             p.catch(err => {
@@ -132,7 +142,7 @@ class VideoPlayerController {
     }
 
     /** Preload URL in standby video, then swap when ready */
-    _preloadAndSwap(url) {
+    _preloadAndSwap(url, fillOverride) {
         if (this._switching) {
             // If a swap is already in progress, just update the standby src
             this.standby.src = url;
@@ -141,7 +151,7 @@ class VideoPlayerController {
 
         this._switching = true;
         const autoSound = window.settingsManager.get('autoPlaySound');
-        const fill = window.settingsManager.get('fillScreen');
+        const fill = this._resolveFill(fillOverride);
 
         // Configure standby
         this.standby.muted = !autoSound;
@@ -163,7 +173,7 @@ class VideoPlayerController {
             cleanup();
             this._switching = false;
             // Fallback: load directly into active
-            this._loadDirect(url);
+            this._loadDirect(url, fillOverride);
         };
 
         // Timeout fallback — if preload takes too long, just swap anyway
@@ -192,7 +202,7 @@ class VideoPlayerController {
         const newActive = this.standby;
 
         // Start playback on new active
-        newActive.playbackRate = this.playbackRate;
+        newActive.playbackRate = this.activeRate;
         const p = newActive.play();
         if (p !== undefined) {
             p.catch(err => {
@@ -239,16 +249,33 @@ class VideoPlayerController {
 
     setPlaybackRate(rate) {
         this.playbackRate = Number(rate) || 1.0;
+        this.activeRate = this.playbackRate;
+        this.applyRate();
+    }
+
+    /** Temporarily override the rate (2.0X fast-forward) without changing the user speed. */
+    applyTemporaryRate(rate) {
+        this.activeRate = Number(rate) || this.playbackRate;
+        this.applyRate();
+    }
+
+    /** Re-apply the user-selected speed (used when a fast-forward ends). */
+    restoreRate() {
+        this.activeRate = this.playbackRate;
+        this.applyRate();
+    }
+
+    applyRate() {
         if (this.video) {
-            this.video.playbackRate = this.playbackRate;
+            this.video.playbackRate = this.activeRate;
         }
         if (this.standby) {
-            this.standby.playbackRate = this.playbackRate;
+            this.standby.playbackRate = this.activeRate;
         }
     }
 
     getPlaybackRate() {
-        return this.video ? this.video.playbackRate : (this.playbackRate || 1.0);
+        return this.video ? this.video.playbackRate : (this.activeRate || 1.0);
     }
 
     toggleMute() {

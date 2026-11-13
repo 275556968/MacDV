@@ -10,6 +10,8 @@
     <link rel="stylesheet" href="css/hud.css">
     <link rel="stylesheet" href="css/comment.css">
     <link rel="stylesheet" href="css/modal.css">
+    <link rel="stylesheet" href="css/space.css">
+    <link rel="stylesheet" href="css/danmaku.css">
 </head>
 <body class="dark-theme">
     <div id="app" class="app-container">
@@ -37,6 +39,32 @@
             </div>
 
             <div class="titlebar-right no-drag">
+                <div id="speed-control" class="speed-control">
+                    <button id="btn-speed" class="tool-btn speed-btn" title="播放速度 ( [ / ] )">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <circle cx="12" cy="13" r="8"></circle>
+                            <path d="M12 9v4l2.5 2"></path>
+                            <path d="M10 2h4"></path>
+                        </svg>
+                        <span id="speed-label" class="speed-label">1.0X</span>
+                        <span class="tool-tip">播放速度 ( [ / ] )</span>
+                    </button>
+                    <div id="speed-menu" class="speed-menu hidden">
+                        <button class="speed-option" data-speed="0.5">0.5X</button>
+                        <button class="speed-option" data-speed="0.75">0.75X</button>
+                        <button class="speed-option active" data-speed="1">1.0X</button>
+                        <button class="speed-option" data-speed="1.25">1.25X</button>
+                        <button class="speed-option" data-speed="1.5">1.5X</button>
+                        <button class="speed-option" data-speed="2">2.0X</button>
+                        <button class="speed-option" data-speed="3">3.0X</button>
+                    </div>
+                </div>
+
+                <button id="btn-danmaku" class="tool-btn active" title="弹幕开关 (D)">
+                    <span class="danmaku-btn-glyph">弹</span>
+                    <span class="tool-tip">弹幕 (D)</span>
+                </button>
+
                 <button id="btn-pure-mode" class="tool-btn" title="纯净模式 (H)">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"></path>
@@ -99,6 +127,9 @@
             <video id="video-player" class="video-player" playsinline autoplay></video>
             <video id="video-player-next" class="video-player video-player-standby" playsinline></video>
 
+            <!-- Scrolling danmaku (bullet comments) -->
+            <div id="danmaku-layer" class="danmaku-layer" aria-hidden="true"></div>
+
             <!-- Big Center Pause Indicator -->
             <div id="center-play-indicator" class="center-play-indicator hidden">
                 <div class="play-icon-circle">
@@ -138,7 +169,7 @@
                 <!-- Right Action Column -->
                 <div class="action-column">
                     <!-- Author Avatar -->
-                    <div class="action-item avatar-action">
+                    <div class="action-item avatar-action" id="action-avatar-btn" title="进入博主主页">
                         <div class="avatar-ring">
                             <img id="action-avatar" src="" alt="avatar" class="action-avatar-img">
                         </div>
@@ -233,6 +264,14 @@
                 <button id="btn-retry-feed" class="btn-retry hidden">点击刷新视频流</button>
             </div>
         </main>
+
+        <!-- Exit author-space playback -> back to the recommendation feed -->
+        <button id="btn-exit-space" class="space-exit-btn hidden" title="返回推荐流 (Esc)">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M19 12H5M12 19l-7-7 7-7"></path>
+            </svg>
+            <span>返回推荐流</span>
+        </button>
 
         <!-- Center Seek HUD (⏩ +10s / ⏪ -10s) -->
         <div id="seek-hud" class="seek-hud hidden">
@@ -332,6 +371,34 @@
             </div>
         </div>
 
+        <!-- Author Space Modal (click avatar / author name) -->
+        <div id="space-modal" class="modal-overlay hidden">
+            <div class="modal-card space-card">
+                <button id="space-close" class="modal-close-btn space-close-btn" title="关闭 (Esc)">✕</button>
+
+                <div class="space-header">
+                    <img id="space-avatar" class="space-avatar" src="" alt="author avatar">
+                    <div class="space-meta">
+                        <h2 id="space-nickname">@抖音用户</h2>
+                        <div class="space-stats">
+                            <span><b id="space-follower">—</b> 粉丝</span>
+                            <span><b id="space-aweme-count">—</b> 作品</span>
+                            <span><b id="space-video-count">0</b> 可播放</span>
+                        </div>
+                        <p id="space-signature" class="space-signature"></p>
+                    </div>
+                </div>
+
+                <div id="space-grid" class="space-grid"></div>
+                <div id="space-empty" class="space-empty hidden">该博主暂时没有可播放的作品</div>
+                <div id="space-loading" class="space-loading">正在加载博主主页…</div>
+
+                <div class="space-footer">
+                    <button id="space-load-more" class="btn-secondary hidden">加载更多作品</button>
+                </div>
+            </div>
+        </div>
+
         <!-- Settings Modal Dialog -->
         <div id="settings-modal" class="modal-overlay hidden">
             <div class="modal-card settings-card">
@@ -390,8 +457,8 @@
                         </div>
                         <div class="setting-item">
                             <div class="setting-label">
-                                <span>鼠标移动到四边边缘退出纯净模式</span>
-                                <span class="setting-desc">将鼠标指针移向窗口顶部、底部或左右边缘时立即恢复界面</span>
+                                <span>鼠标移动到四边边缘临时唤出界面</span>
+                                <span class="setting-desc">移到窗口顶部、底部或左右边缘时临时显示按钮，2.5 秒无操作后自动回到纯净模式</span>
                             </div>
                             <label class="switch">
                                 <input type="checkbox" id="setting-exit-pure-edge" checked>
@@ -435,6 +502,81 @@
                         </div>
                     </div>
 
+                    <!-- Section 3.2: Danmaku -->
+                    <div class="settings-section">
+                        <h3>弹幕</h3>
+                        <div class="setting-item">
+                            <div class="setting-label">
+                                <span>显示弹幕</span>
+                                <span class="setting-desc">在画面上方滚动显示该视频的抖音弹幕，跟随进度、暂停与倍速，快捷键 D</span>
+                            </div>
+                            <label class="switch">
+                                <input type="checkbox" id="setting-danmaku-enabled" checked>
+                                <span class="slider"></span>
+                            </label>
+                        </div>
+                        <div class="setting-item">
+                            <div class="setting-label">
+                                <span>弹幕不透明度</span>
+                                <span class="setting-desc">调低后弹幕更淡，不遮挡画面</span>
+                            </div>
+                            <div class="slider-group">
+                                <input type="range" id="setting-danmaku-opacity" min="0.2" max="1.0" step="0.05" value="0.85">
+                                <span id="danmaku-opacity-val">85%</span>
+                            </div>
+                        </div>
+                        <div class="setting-item">
+                            <div class="setting-label">
+                                <span>显示区域</span>
+                                <span class="setting-desc">弹幕占用画面上方的范围，放不下的弹幕会被自动略过</span>
+                            </div>
+                            <div class="danmaku-chips">
+                                <button class="chip-btn" data-danmaku-area="0.25">1/4 屏</button>
+                                <button class="chip-btn active" data-danmaku-area="0.5">半屏</button>
+                                <button class="chip-btn" data-danmaku-area="0.75">3/4 屏</button>
+                                <button class="chip-btn" data-danmaku-area="1">全屏</button>
+                            </div>
+                        </div>
+                        <div class="setting-item">
+                            <div class="setting-label">
+                                <span>字号</span>
+                                <span class="setting-desc">弹幕文字大小</span>
+                            </div>
+                            <div class="danmaku-chips">
+                                <button class="chip-btn" data-danmaku-size="18">小</button>
+                                <button class="chip-btn active" data-danmaku-size="22">标准</button>
+                                <button class="chip-btn" data-danmaku-size="28">大</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Section 3.5: Watched-video dedupe -->
+                    <div class="settings-section">
+                        <h3>观看记录与去重</h3>
+                        <div class="setting-item">
+                            <div class="setting-label">
+                                <span>自动过滤看过的视频</span>
+                                <span class="setting-desc">播放过的视频会被记住（本机保存，最多 3000 条），刷新或重启后都不会再重复推荐</span>
+                            </div>
+                            <label class="switch">
+                                <input type="checkbox" id="setting-dedupe-feed" checked>
+                                <span class="slider"></span>
+                            </label>
+                        </div>
+                        <div class="setting-item">
+                            <div class="setting-label">
+                                <span>观看记录</span>
+                                <span class="setting-desc">已记录 <b id="seen-count">0</b> 个看过的视频；清空后所有视频会重新参与推荐</span>
+                            </div>
+                            <button id="btn-clear-seen" class="settings-action-btn">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="btn-svg-icon">
+                                    <path d="M3 6h18M8 6V4h8v2m-1 0 1 14H8L7 6"></path>
+                                </svg>
+                                <span>清除观看记录</span>
+                            </button>
+                        </div>
+                    </div>
+
                     <!-- Section 4: Seek Step -->
                     <div class="settings-section">
                         <h3>方向键快进 / 快退步长</h3>
@@ -472,6 +614,8 @@
                                 <tr><td><kbd>S</kbd></td><td>切换画面<b>铺满窗口 / 原始比例</b></td></tr>
                                 <tr><td><kbd>F</kbd> 或 <b>双击画面</b></td><td>进入 / 退出<b>全屏模式</b></td></tr>
                                 <tr><td><kbd>M</kbd></td><td>快速<b>静音 / 开启声音</b></td></tr>
+                                <tr><td><kbd>[</kbd> / <kbd>]</kbd></td><td>降低 / 提高<b>播放速度</b>（0.5X–3.0X，也可点右上角倍速按钮）</td></tr>
+                                <tr><td><kbd>D</kbd></td><td>显示 / 隐藏<b>弹幕</b></td></tr>
                                 <tr><td><kbd>C</kbd></td><td>打开 / 关闭<b>原生半透明评论抽屉</b></td></tr>
                                 <tr><td><kbd>R</kbd> 或 <kbd>Ctrl+R</kbd></td><td><b>刷新</b>当前频道视频推荐流</td></tr>
                                 <tr><td><kbd>T</kbd></td><td>切换<b>窗口置顶 (Always on Top)</b></td></tr>
@@ -575,7 +719,9 @@
     <script src="js/settings.js"></script>
     <script src="js/player.js"></script>
     <script src="js/overlay.js"></script>
+    <script src="js/danmaku.js"></script>
     <script src="js/comment.js"></script>
+    <script src="js/space.js"></script>
     <script src="js/login.js"></script>
     <script src="js/updater.js"></script>
     <script src="js/app.js"></script>

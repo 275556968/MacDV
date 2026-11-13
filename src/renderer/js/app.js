@@ -1,9 +1,14 @@
+const SEEN_IDS_STORAGE_KEY = 'windv_seen_ids_v1';
+const SEEN_IDS_LIMIT = 3000;
+const SPEED_PRESETS = [0.5, 0.75, 1.0, 1.25, 1.5, 2.0, 3.0];
+
 class AppController {
     constructor() {
         this.items = [];
         this.currentIndex = 0;
         this.isLoading = false;
         this.isPureMode = false;
+        this.isPeeking = false;
         this.pureModeActivatedAt = 0;
         this.isFullScreen = false;
         this.isControlsVisible = true;
@@ -19,6 +24,8 @@ class AppController {
         this.fastForwardSource = null;
         this.wasPausedBeforeFastForward = false;
         this.speedHud = null;
+        this.fastForwardWatchdog = null;
+        this.speedMenu = null;
 
         // Wheel gesture debounce
         this.scrollAccumulator = 0;
@@ -34,6 +41,15 @@ class AppController {
         this.toast = document.getElementById('toast');
         this.toastMessage = document.getElementById('toast-message');
         this.toastTimer = null;
+
+        // Author-space playback (can return to the exact feed position)
+        this.isInSpace = false;
+        this.spaceReturn = null;
+        this.isLoadingSpace = false;
+
+        // Watched-video dedupe (persisted, so restarts don't bring seen videos back)
+        this.seenIds = this.loadSeenIds();
+        this.emptyBatchStreak = 0;
 
         this.init();
     }
@@ -140,6 +156,22 @@ class AppController {
             this.loadFeed(true);
         });
 
+        // Playback speed control (top-right)
+        this.speedMenu = document.getElementById('speed-menu');
+        document.getElementById('btn-speed')?.addEventListener('click', (e) => {
+            e.stopPropagation();
+            this.toggleSpeedMenu();
+        });
+        this.speedMenu?.addEventListener('click', (e) => e.stopPropagation());
+        this.speedMenu?.querySelectorAll('.speed-option').forEach(btn => {
+            btn.addEventListener('click', () => {
+                this.setPlaybackSpeed(parseFloat(btn.dataset.speed));
+                this.closeSpeedMenu();
+            });
+        });
+        document.addEventListener('click', () => this.closeSpeedMenu());
+        this.updateSpeedUI();
+
         // Pure mode button
         document.getElementById('btn-pure-mode')?.addEventListener('click', () => {
             this.togglePureMode();
@@ -165,6 +197,11 @@ class AppController {
             this.showToast('🔄 正在刷新推荐视频流...');
         });
 
+        // Leave the author's space and go back to the recommendation feed
+        document.getElementById('btn-exit-space')?.addEventListener('click', () => {
+            this.exitSpacePlayback();
+        });
+
         // Settings button
         document.getElementById('btn-settings')?.addEventListener('click', () => {
             document.getElementById('settings-modal')?.classList.remove('hidden');
@@ -180,6 +217,65 @@ class AppController {
         document.getElementById('win-close')?.addEventListener('click', () => {
             window.api?.window?.close();
         });
+    }
+
+    // ==================== Playback speed ====================
+
+    formatSpeed(rate) {
+        const n = Number(rate) || 1;
+        return `${Number.isInteger(n) ? n.toFixed(1) : n}X`;
+    }
+
+    setPlaybackSpeed(rate) {
+        const speed = Math.min(4, Math.max(0.25, Number(rate) || 1));
+
+        // A speed change wins over the temporary fast-forward rate
+        if (this.isFastForwarding) {
+            this.abortFastForward();
+        }
+
+        window.videoPlayer?.setPlaybackRate(speed);
+        window.settingsManager.set('playbackSpeed', speed);
+        this.updateSpeedUI();
+        this.showToast(`▶ 播放速度: ${this.formatSpeed(speed)}`);
+    }
+
+    cyclePlaybackSpeed(direction) {
+        const current = Number(window.settingsManager.get('playbackSpeed')) || 1;
+        let idx = SPEED_PRESETS.findIndex((s) => Math.abs(s - current) < 0.001);
+        if (idx < 0) idx = SPEED_PRESETS.findIndex((s) => s > current);
+        if (idx < 0) idx = SPEED_PRESETS.length - 1;
+        const next = SPEED_PRESETS[Math.min(SPEED_PRESETS.length - 1, Math.max(0, idx + direction))];
+        if (Math.abs(next - current) > 0.001) {
+            this.setPlaybackSpeed(next);
+        }
+    }
+
+    updateSpeedUI() {
+        const speed = Number(window.settingsManager.get('playbackSpeed')) || 1;
+        const label = document.getElementById('speed-label');
+        if (label) label.textContent = this.formatSpeed(speed);
+
+        document.getElementById('speed-control')?.classList.toggle('at-speed', Math.abs(speed - 1) > 0.001);
+        this.speedMenu?.querySelectorAll('.speed-option').forEach(btn => {
+            btn.classList.toggle('active', Math.abs(parseFloat(btn.dataset.speed) - speed) < 0.001);
+        });
+    }
+
+    toggleSpeedMenu() {
+        if (!this.speedMenu) return;
+        if (this.speedMenu.classList.contains('hidden')) {
+            this.updateSpeedUI();
+            this.speedMenu.classList.remove('hidden');
+            document.getElementById('speed-control')?.classList.add('menu-open');
+        } else {
+            this.closeSpeedMenu();
+        }
+    }
+
+    closeSpeedMenu() {
+        this.speedMenu?.classList.add('hidden');
+        document.getElementById('speed-control')?.classList.remove('menu-open');
     }
 
     initGestures() {
@@ -230,7 +326,7 @@ class AppController {
         // Auto-hide controls & cursor when mouse/user is inactive, and detect screen edges
         window.addEventListener('mousemove', (e) => {
             this.handleUserActivity();
-            this.checkEdgeExitPureMode(e);
+            this.handleEdgePeek(e);
         });
         window.addEventListener('pointerdown', () => this.handleUserActivity());
 
@@ -278,6 +374,11 @@ class AppController {
             }
         });
 
+        // Tab hidden (minimize / app switch) — never leave playback stuck at 2.0X
+        document.addEventListener('visibilitychange', () => {
+            if (document.hidden) this.abortFastForward();
+        });
+
         // Safety release if right mouse button was let go during mouse movement
         window.addEventListener('mousemove', (e) => {
             if (this.isFastForwarding && this.fastForwardSource === 'mouse' && (e.buttons & 2) === 0) {
@@ -294,8 +395,8 @@ class AppController {
         const video = window.videoPlayer?.video;
         this.wasPausedBeforeFastForward = video ? video.paused : false;
 
-        // Accelerate to 2.0X
-        window.videoPlayer?.setPlaybackRate(2.0);
+        // Accelerate to 2.0X (temporary, without touching the user-selected speed)
+        window.videoPlayer?.applyTemporaryRate(2.0);
 
         // If paused, temporarily play while holding
         if (this.wasPausedBeforeFastForward && video) {
@@ -310,22 +411,58 @@ class AppController {
             this.speedHud.classList.remove('hidden', 'hiding');
         }
 
+        this.armFastForwardWatchdog();
         this.handleUserActivity();
+    }
+
+    /**
+     * Safety net: if the release event is ever lost (e.g. the right button is
+     * released outside the window), never leave playback stuck at 2.0X.
+     */
+    armFastForwardWatchdog() {
+        clearTimeout(this.fastForwardWatchdog);
+        this.fastForwardWatchdog = setTimeout(() => {
+            console.warn('[WinDV] Fast-forward watchdog fired: restoring 1.0X');
+            this.abortFastForward();
+            this.handleUserActivity();
+        }, 60000);
     }
 
     stopFastForward() {
         if (!this.isFastForwarding) return;
-        this.isFastForwarding = false;
-        this.fastForwardSource = null;
 
-        // Restore 1.0X normal playback
-        window.videoPlayer?.setPlaybackRate(1.0);
+        const shouldRestorePause = this.wasPausedBeforeFastForward;
+        this.resetFastForwardState();
 
         // If video was originally paused, pause it again
-        if (this.wasPausedBeforeFastForward) {
+        if (shouldRestorePause) {
             window.videoPlayer?.video?.pause();
-            this.wasPausedBeforeFastForward = false;
         }
+
+        this.handleUserActivity();
+    }
+
+    /**
+     * Force back to 1.0X without the "restore pause" / UI side effects.
+     * Used when switching videos, hiding the window, or by the watchdog.
+     */
+    abortFastForward() {
+        clearTimeout(this.rightPressTimer);
+        clearTimeout(this.arrowRightTimer);
+
+        if (!this.isFastForwarding) return;
+        this.resetFastForwardState();
+    }
+
+    resetFastForwardState() {
+        this.isFastForwarding = false;
+        this.fastForwardSource = null;
+        this.wasPausedBeforeFastForward = false;
+        clearTimeout(this.fastForwardWatchdog);
+        this.fastForwardWatchdog = null;
+
+        // Restore the user-selected normal speed
+        window.videoPlayer?.restoreRate();
 
         // Hide HUD with smooth fade-out
         if (this.speedHud) {
@@ -337,8 +474,6 @@ class AppController {
                 }
             }, 180);
         }
-
-        this.handleUserActivity();
     }
 
     showControls() {
@@ -352,8 +487,8 @@ class AppController {
             document.body.classList.remove('cursor-hidden');
         }
 
-        // Reveal UI chrome if not in pure mode
-        if (!this.isPureMode) {
+        // Reveal UI chrome if not in pure mode, or while peeking from a screen edge
+        if (!this.isPureMode || this.isPeeking) {
             this.titlebar?.classList.remove('hide-overlay');
             this.overlayLayer?.classList.remove('hide-overlay');
             this.isControlsVisible = true;
@@ -367,26 +502,39 @@ class AppController {
     }
 
     handleUserIdle() {
-        // Do not auto-hide if fast-forwarding or if a dialog/drawer is open
-        if (this.isFastForwarding) return;
+        // Do not auto-hide while fast-forwarding or while a dialog/drawer is open,
+        // but keep the idle chain alive so the UI hides once they close/release.
+        if (this.isFastForwarding) {
+            this.restartIdleCheck();
+            return;
+        }
 
         const isInteractingWithDialog =
+            window.spaceView?.isOpen ||
             window.commentDrawer?.isOpen ||
             !document.getElementById('login-modal')?.classList.contains('hidden') ||
             !document.getElementById('settings-modal')?.classList.contains('hidden');
 
-        if (isInteractingWithDialog) return;
+        if (isInteractingWithDialog) {
+            this.restartIdleCheck();
+            return;
+        }
 
         // Auto-hide mouse cursor
         this.isIdle = true;
         document.body.classList.add('cursor-hidden');
 
-        // Auto-hide UI chrome (titlebar and bottom overlay)
-        if (!this.isPureMode) {
-            this.titlebar?.classList.add('hide-overlay');
-            this.overlayLayer?.classList.add('hide-overlay');
-            this.isControlsVisible = false;
-        }
+        // End any temporary pure-mode peek, then auto-hide UI chrome
+        this.isPeeking = false;
+        this.closeSpeedMenu();
+        this.titlebar?.classList.add('hide-overlay');
+        this.overlayLayer?.classList.add('hide-overlay');
+        this.isControlsVisible = false;
+    }
+
+    restartIdleCheck() {
+        clearTimeout(this.idleTimer);
+        this.idleTimer = setTimeout(() => this.handleUserIdle(), 1000);
     }
 
     initKeyboard() {
@@ -397,6 +545,15 @@ class AppController {
             if (['INPUT', 'TEXTAREA'].includes(document.activeElement?.tagName)) {
                 if (e.key === 'Escape') {
                     document.activeElement.blur();
+                }
+                return;
+            }
+
+            // While the author space is open, only Esc is meaningful (close it)
+            if (window.spaceView?.isOpen) {
+                if (e.key === 'Escape') {
+                    e.preventDefault();
+                    window.spaceView.close();
                 }
                 return;
             }
@@ -457,6 +614,18 @@ class AppController {
                     e.preventDefault();
                     window.videoPlayer?.toggleMute();
                     break;
+                case 'BracketLeft':
+                    e.preventDefault();
+                    this.cyclePlaybackSpeed(-1);
+                    break;
+                case 'BracketRight':
+                    e.preventDefault();
+                    this.cyclePlaybackSpeed(1);
+                    break;
+                case 'KeyD':
+                    e.preventDefault();
+                    window.danmaku?.toggle();
+                    break;
                 case 'KeyC':
                     e.preventDefault();
                     window.commentDrawer?.toggle();
@@ -471,8 +640,12 @@ class AppController {
                     document.getElementById('btn-always-top')?.click();
                     break;
                 case 'Escape':
-                    // Close open modals / drawer / exit fullscreen
-                    if (window.commentDrawer?.isOpen) {
+                    // Close the speed menu first, then modals / drawer / fullscreen
+                    if (!this.speedMenu?.classList.contains('hidden')) {
+                        this.closeSpeedMenu();
+                    } else if (window.spaceView?.isOpen) {
+                        window.spaceView.close();
+                    } else if (window.commentDrawer?.isOpen) {
                         window.commentDrawer.close();
                     } else if (!document.getElementById('update-modal')?.classList.contains('hidden')) {
                         document.getElementById('update-modal')?.classList.add('hidden');
@@ -480,6 +653,8 @@ class AppController {
                         window.loginModal?.close();
                     } else if (!document.getElementById('settings-modal')?.classList.contains('hidden')) {
                         document.getElementById('settings-modal')?.classList.add('hidden');
+                    } else if (this.isInSpace) {
+                        this.exitSpacePlayback();
                     } else if (this.isFullScreen) {
                         this.toggleFullScreen();
                     }
@@ -594,7 +769,7 @@ class AppController {
         }
 
         // Seek step chips
-        const chips = modal?.querySelectorAll('.chip-btn');
+        const chips = modal?.querySelectorAll('.seek-step-chips .chip-btn');
         const curStep = window.settingsManager.get('seekStepSeconds');
         chips?.forEach(chip => {
             const step = parseInt(chip.getAttribute('data-step'), 10);
@@ -605,11 +780,120 @@ class AppController {
                 window.settingsManager.set('seekStepSeconds', step);
             });
         });
+
+        // Watched-video dedupe
+        const chkDedupe = document.getElementById('setting-dedupe-feed');
+        if (chkDedupe) {
+            chkDedupe.checked = this.isDedupeEnabled();
+            chkDedupe.addEventListener('change', () => {
+                window.settingsManager.set('dedupeFeed', chkDedupe.checked);
+                this.showToast(chkDedupe.checked ? '🔁 已开启观看去重' : '已关闭观看去重');
+            });
+        }
+
+        document.getElementById('btn-clear-seen')?.addEventListener('click', () => {
+            this.clearSeenHistory();
+        });
+
+        this.updateSeenCountUI();
     }
 
-    async loadFeed(reset = false) {
+    // ==================== Watched-video dedupe ====================
+
+    loadSeenIds() {
+        try {
+            const raw = localStorage.getItem(SEEN_IDS_STORAGE_KEY);
+            if (!raw) return new Set();
+            const arr = JSON.parse(raw);
+            if (!Array.isArray(arr)) return new Set();
+            return new Set(arr.filter(Boolean).map(String));
+        } catch (e) {
+            console.warn('[WinDV] Failed to load watched history:', e.message);
+            return new Set();
+        }
+    }
+
+    saveSeenIds() {
+        try {
+            const ids = Array.from(this.seenIds);
+            if (ids.length > SEEN_IDS_LIMIT) {
+                // Set keeps insertion order, so drop the oldest entries
+                this.seenIds = new Set(ids.slice(ids.length - SEEN_IDS_LIMIT));
+            }
+            localStorage.setItem(SEEN_IDS_STORAGE_KEY, JSON.stringify(Array.from(this.seenIds)));
+        } catch (e) {
+            console.warn('[WinDV] Failed to persist watched history:', e.message);
+        }
+        this.updateSeenCountUI();
+    }
+
+    itemId(item) {
+        return item && item.awemeId ? String(item.awemeId) : '';
+    }
+
+    /** Record a video as watched (called when it is actually shown/played). */
+    markSeen(item) {
+        const id = this.itemId(item);
+        if (!id || this.seenIds.has(id)) return;
+        this.seenIds.add(id);
+        this.saveSeenIds();
+    }
+
+    isDedupeEnabled() {
+        return window.settingsManager.get('dedupeFeed') !== false;
+    }
+
+    /**
+     * Drop videos that were already watched, already queued, or duplicated
+     * inside the same batch.
+     */
+    filterUnseen(list, excludeQueued = true) {
+        if (!Array.isArray(list)) return [];
+        if (!this.isDedupeEnabled()) return list;
+
+        const queuedIds = new Set();
+        if (excludeQueued) {
+            for (const item of this.items) {
+                const id = this.itemId(item);
+                if (id) queuedIds.add(id);
+            }
+        }
+
+        const batchIds = new Set();
+        return list.filter((item) => {
+            const id = this.itemId(item);
+            if (!id) return true; // no id -> cannot dedupe, keep it
+            if (this.seenIds.has(id)) return false;
+            if (queuedIds.has(id)) return false;
+            if (batchIds.has(id)) return false;
+            batchIds.add(id);
+            return true;
+        });
+    }
+
+    clearSeenHistory() {
+        this.seenIds.clear();
+        this.emptyBatchStreak = 0;
+        try {
+            localStorage.removeItem(SEEN_IDS_STORAGE_KEY);
+        } catch (e) {}
+        this.updateSeenCountUI();
+        this.showToast('🧹 观看记录已清除，所有视频会重新参与推荐');
+    }
+
+    updateSeenCountUI() {
+        const el = document.getElementById('seen-count');
+        if (el) el.textContent = String(this.seenIds.size);
+    }
+
+    async loadFeed(reset = false, notifyEmpty = false) {
         if (this.isLoading) return;
         this.isLoading = true;
+
+        // Refreshing the feed leaves the author space
+        if (reset && this.isInSpace) {
+            this.setSpaceMode(false);
+        }
 
         if (reset) {
             this.loadingView.classList.remove('hidden');
@@ -618,26 +902,74 @@ class AppController {
         }
 
         try {
-            const list = await window.api.engine.fetchFeed({
+            let list = await window.api.engine.fetchFeed({
                 count: 10,
                 reset: reset,
                 horizontalOnly: true
             });
+            let fresh = this.filterUnseen(list, !reset);
 
-            if (reset) {
-                this.items = list;
-                this.currentIndex = 0;
-            } else {
-                this.items.push(...list);
+            // An all-watched batch is not an error: try a couple more batches
+            // before telling the user there is nothing new.
+            let retries = 0;
+            while (fresh.length === 0 && list && list.length > 0 && retries < 2) {
+                retries += 1;
+                await new Promise((r) => setTimeout(r, 700));
+                list = await window.api.engine.fetchFeed({
+                    count: 10,
+                    reset: reset,
+                    horizontalOnly: true
+                });
+                fresh = this.filterUnseen(list, !reset);
             }
 
-            if (this.items.length > 0) {
+            if (list && list.length > 0) {
+                const filteredOut = list.length - fresh.length;
+                if (filteredOut > 0) {
+                    console.log(`[WinDV] 去重: 本批 ${list.length} 个，过滤 ${filteredOut} 个看过的/重复的视频`);
+                }
+            }
+
+            if (fresh.length > 0) {
+                if (reset) {
+                    this.items = fresh;
+                    this.currentIndex = 0;
+                } else {
+                    this.items.push(...fresh);
+                }
+                this.emptyBatchStreak = 0;
+
                 this.loadingView.classList.add('hidden');
+                this.btnRetryFeed.classList.add('hidden');
                 if (reset) {
                     this.playCurrent();
                 }
+                return;
+            }
+
+            if (!list || list.length === 0) {
+                // API returned nothing at all
+                if (this.items.length > 0) {
+                    this.loadingView.classList.add('hidden');
+                } else {
+                    this.engineStatus.textContent = '未获取到视频，请检查网络或点击刷新';
+                    this.btnRetryFeed.classList.remove('hidden');
+                }
+                return;
+            }
+
+            // Items came back, but every one of them has already been watched.
+            // Keep the current queue playing instead of clearing it.
+            this.emptyBatchStreak += 1;
+            if (this.items.length > 0) {
+                this.loadingView.classList.add('hidden');
+                this.btnRetryFeed.classList.add('hidden');
+                if (reset || notifyEmpty || this.emptyBatchStreak >= 2) {
+                    this.showToast('🔄 这一批都看过了，可在设置里清除观看记录');
+                    this.emptyBatchStreak = 0;
+                }
             } else {
-                this.engineStatus.textContent = '未获取到视频，请检查网络或点击刷新';
+                this.engineStatus.textContent = '刷到的都是看过的视频，点刷新重试或清除观看记录';
                 this.btnRetryFeed.classList.remove('hidden');
             }
         } catch (err) {
@@ -653,12 +985,23 @@ class AppController {
         const item = this.currentItem;
         if (!item) return;
 
-        window.videoPlayer?.load(item.playUrl);
+        // A new video always starts at 1.0X, even if a release event was lost
+        this.abortFastForward();
+
+        // Vertical videos (from an author's space) are letterboxed instead of cropped
+        const fill = item.isHorizontal === false ? false : window.settingsManager.get('fillScreen');
+        window.videoPlayer?.load(item.playUrl, fill);
         window.videoOverlay?.render(item);
+        window.danmaku?.setItem(item);
+        this.markSeen(item);
         this.handleUserActivity();
 
         // Preload next batch if close to the end
-        if (this.items.length - this.currentIndex <= 3 && !this.isLoading) {
+        if (this.isInSpace) {
+            if (this.items.length - this.currentIndex <= 3) {
+                this.loadMoreSpace();
+            }
+        } else if (this.items.length - this.currentIndex <= 3 && !this.isLoading) {
             this.loadFeed(false);
         }
 
@@ -668,12 +1011,102 @@ class AppController {
         }
     }
 
+    /**
+     * Play a video picked from an author's space. The author's videos become
+     * the current queue, while the recommendation feed (and its position) is
+     * remembered so the user can jump back with the "返回推荐流" button.
+     */
+    playFromSpace(list, index) {
+        if (!Array.isArray(list) || list.length === 0) return;
+        const picked = list[index] || list[0];
+        if (!picked) return;
+
+        if (!this.isInSpace) {
+            this.spaceReturn = {
+                items: this.items.slice(),
+                currentIndex: this.currentIndex
+            };
+        }
+
+        this.items = list.slice();
+        this.currentIndex = Math.max(0, Math.min(index || 0, this.items.length - 1));
+        this.setSpaceMode(true);
+        this.playCurrent();
+    }
+
+    setSpaceMode(enabled) {
+        this.isInSpace = enabled;
+        document.getElementById('btn-exit-space')?.classList.toggle('hidden', !enabled);
+        if (!enabled) this.spaceReturn = null;
+    }
+
+    /** Stop browsing the author and restore the feed queue + position */
+    exitSpacePlayback() {
+        if (!this.isInSpace) return;
+
+        const snapshot = this.spaceReturn;
+        this.setSpaceMode(false);
+        this.closeSpeedMenu();
+
+        if (snapshot && Array.isArray(snapshot.items) && snapshot.items.length > 0) {
+            this.items = snapshot.items;
+            this.currentIndex = Math.max(0, Math.min(snapshot.currentIndex, snapshot.items.length - 1));
+            this.playCurrent();
+        } else {
+            this.items = [];
+            this.currentIndex = 0;
+            this.loadFeed(true);
+        }
+
+        this.showToast('↩ 已退出博主主页，回到推荐流');
+    }
+
+    /** Continue loading the opened author's posts while swiping through them */
+    async loadMoreSpace(notifyEmpty = false) {
+        if (!this.isInSpace || this.isLoadingSpace) return;
+
+        if (!window.spaceView?.hasMore) {
+            if (notifyEmpty) this.showToast('👤 已看完该博主的作品');
+            return;
+        }
+
+        this.isLoadingSpace = true;
+        try {
+            const more = await window.spaceView.loadMoreItems();
+            if (!this.isInSpace) return;
+
+            const queued = new Set(this.items.map((item) => this.itemId(item)).filter(Boolean));
+            const fresh = (more || []).filter((item) => {
+                const id = this.itemId(item);
+                return id && !queued.has(id);
+            });
+
+            if (fresh.length > 0) {
+                this.items.push(...fresh);
+
+                // User swiped at the end: continue to the first newly loaded video
+                if (notifyEmpty) {
+                    this.currentIndex = Math.min(this.currentIndex + 1, this.items.length - 1);
+                    this.playCurrent();
+                }
+            } else if (notifyEmpty && !window.spaceView.hasMore) {
+                this.showToast('👤 已看完该博主的作品');
+            }
+        } catch (err) {
+            console.error('[WinDV] Failed to load more author posts:', err);
+        } finally {
+            this.isLoadingSpace = false;
+        }
+    }
+
     nextVideo() {
         if (this.currentIndex < this.items.length - 1) {
             this.currentIndex += 1;
             this.playCurrent();
+        } else if (this.isInSpace) {
+            this.loadMoreSpace(true);
         } else if (!this.isLoading) {
-            this.loadFeed(false);
+            this.loadFeed(false, true);
         }
     }
 
@@ -684,7 +1117,12 @@ class AppController {
         }
     }
 
-    checkEdgeExitPureMode(e) {
+    /**
+     * Pure mode: moving the cursor to any window edge temporarily reveals the UI
+     * ("peek") instead of permanently leaving pure mode. The chrome auto-hides
+     * again after 2.5s of inactivity, so pure mode stays on.
+     */
+    handleEdgePeek(e) {
         if (!this.isPureMode) return;
         if (!window.settingsManager.get('exitPureOnEdge')) return;
 
@@ -705,19 +1143,37 @@ class AppController {
         const isRight = x >= w - threshold;
 
         if (isTop || isBottom || isLeft || isRight) {
-            this.setPureMode(false);
+            this.peekControls();
         }
+    }
+
+    peekControls() {
+        this.isPeeking = true;
+
+        if (this.isIdle) {
+            this.isIdle = false;
+            document.body.classList.remove('cursor-hidden');
+        }
+
+        this.titlebar?.classList.remove('hide-overlay');
+        this.overlayLayer?.classList.remove('hide-overlay');
+        this.isControlsVisible = true;
+
+        clearTimeout(this.idleTimer);
+        this.idleTimer = setTimeout(() => this.handleUserIdle(), 2500);
     }
 
     setPureMode(enabled) {
         this.isPureMode = enabled;
+        this.isPeeking = false;
         this.pureModeActivatedAt = Date.now();
         document.getElementById('btn-pure-mode')?.classList.toggle('active', enabled);
         if (enabled) {
+            this.closeSpeedMenu();
             this.titlebar?.classList.add('hide-overlay');
             this.overlayLayer?.classList.add('hide-overlay');
             document.getElementById('center-play-indicator')?.classList.add('hidden');
-            this.showToast('✨ 纯净模式: 已开启 (碰触四边或按 H 恢复)');
+            this.showToast('✨ 纯净模式: 已开启 (碰触四边可临时唤出界面，按 H 退出)');
         } else {
             this.titlebar?.classList.remove('hide-overlay');
             this.overlayLayer?.classList.remove('hide-overlay');

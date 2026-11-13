@@ -239,6 +239,18 @@ ipcMain.handle('engine:fetchComments', async (event, { awemeId, cursor = 0, coun
     return await engine.fetchComments(awemeId, cursor, count);
 });
 
+ipcMain.handle('engine:fetchDanmaku', async (event, { awemeId, startMs = 0, durationMs = 0 }) => {
+    return await engine.fetchDanmaku(awemeId, startMs, durationMs);
+});
+
+ipcMain.handle('engine:fetchUserProfile',async (event, { secUid }) => {
+    return await engine.fetchUserProfile(secUid);
+});
+
+ipcMain.handle('engine:fetchUserPosts', async (event, { secUid, maxCursor = 0, count = 18 }) => {
+    return await engine.fetchUserPosts(secUid, maxCursor, count);
+});
+
 ipcMain.handle('engine:checkLogin', async () => {
     return await engine.checkLoginStatus();
 });

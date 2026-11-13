@@ -30,6 +30,14 @@ class VideoOverlayController {
         this.btnShare?.addEventListener('click', () => this.copyShareLink());
         this.btnAspect?.addEventListener('click', () => window.videoPlayer?.toggleAspect());
         this.btnFullscreen?.addEventListener('click', () => window.app?.toggleFullScreen());
+
+        // Click the uploader's avatar / nickname to open their space
+        const openAuthorSpace = () => {
+            if (!this.currentItem?.author) return;
+            window.spaceView?.open(this.currentItem.author);
+        };
+        document.getElementById('action-avatar-btn')?.addEventListener('click', openAuthorSpace);
+        this.authorName?.addEventListener('click', openAuthorSpace);
     }
 
     render(item) {

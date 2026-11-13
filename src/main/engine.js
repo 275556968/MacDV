@@ -16,6 +16,9 @@ const BLOCKED_SCHEMES = [
     'maskfog', 'snssdk', 'bytedance'
 ];
 
+// Douyin serves danmaku in fixed 32-second windows
+const DANMAKU_WINDOW_MS = 32000;
+
 class DouyinEngine {
     constructor() {
         this.engineWin = null;
@@ -405,6 +408,120 @@ class DouyinEngine {
         }
     }
 
+    /** Run a same-origin GET inside the hidden Douyin window and return the raw text. */
+    async fetchEngineText(path) {
+        const js = `
+            (async () => {
+                const response = await fetch(${JSON.stringify(path)}, {
+                    method: 'GET',
+                    credentials: 'include',
+                    headers: {
+                        'Accept': 'application/json, text/plain, */*'
+                    }
+                });
+                return await response.text();
+            })()
+        `;
+        return await this.engineWin.webContents.executeJavaScript(js);
+    }
+
+    async fetchUserProfile(secUid) {
+        if (!secUid) return null;
+        await this.waitUntilReady();
+
+        const path = '/aweme/v1/web/user/profile/other/?device_platform=webapp&aid=6383&channel=channel_pc_web'
+            + `&sec_user_id=${encodeURIComponent(secUid)}`
+            + '&version_code=170400&version_name=17.4.0&cookie_enabled=true'
+            + '&screen_width=1920&screen_height=1080&browser_language=zh-CN&browser_platform=Win32&browser_name=Chrome';
+
+        try {
+            const json = JSON.parse(await this.fetchEngineText(path));
+            const u = json.user || {};
+            return {
+                uid: u.uid || null,
+                secUid: u.sec_uid || secUid,
+                nickname: u.nickname || '抖音用户',
+                signature: u.signature || '',
+                avatarUrl: u.avatar_larger?.url_list?.[0] || u.avatar_medium?.url_list?.[0] || null,
+                followerCount: u.follower_count || 0,
+                followingCount: u.following_count || 0,
+                totalFavorited: u.total_favorited || 0,
+                awemeCount: u.aweme_count || 0
+            };
+        } catch (err) {
+            console.error('[DouyinEngine] fetchUserProfile error:', err);
+            return null;
+        }
+    }
+
+    async fetchUserPosts(secUid, maxCursor = 0, count = 18) {
+        if (!secUid) return { items: [], hasMore: false, maxCursor: 0 };
+        await this.waitUntilReady();
+
+        const limit = Math.min(30, Math.max(1, Number(count) || 18));
+        const path = '/aweme/v1/web/aweme/post/?device_platform=webapp&aid=6383&channel=channel_pc_web'
+            + `&sec_user_id=${encodeURIComponent(secUid)}`
+            + `&max_cursor=${Number(maxCursor) || 0}&count=${limit}`
+            + '&version_code=170400&version_name=17.4.0&cookie_enabled=true'
+            + '&screen_width=1920&screen_height=1080&browser_language=zh-CN&browser_platform=Win32&browser_name=Chrome';
+
+        try {
+            const json = JSON.parse(await this.fetchEngineText(path));
+            const rawList = json.aweme_list || [];
+            const items = rawList.map((item) => this.formatAwemeItem(item));
+            return {
+                items,
+                hasMore: !!json.has_more,
+                maxCursor: json.max_cursor || 0
+            };
+        } catch (err) {
+            console.error('[DouyinEngine] fetchUserPosts error:', err);
+            return { items: [], hasMore: false, maxCursor: 0 };
+        }
+    }
+
+    /**
+     * Fetch one window of danmaku (bullet comments) for a video.
+     * Douyin serves them in fixed 32s windows, so the caller pages by `startMs`.
+     */
+    async fetchDanmaku(awemeId, startMs = 0, durationMs = 0) {
+        const id = String(awemeId || '');
+        if (!/^\d+$/.test(id)) return { items: [], startMs: 0, endMs: 0, total: 0, ok: false };
+        await this.waitUntilReady();
+
+        const start = Math.max(0, Math.floor(Number(startMs) || 0));
+        const end = start + DANMAKU_WINDOW_MS;
+        const duration = Math.max(0, Math.floor(Number(durationMs) || 0));
+        const path = '/aweme/v1/web/danmaku/get_v2/?device_platform=webapp&aid=6383&channel=channel_pc_web'
+            + `&app_name=aweme&format=json&group_id=${id}&item_id=${id}`
+            + `&start_time=${start}&end_time=${end}&duration=${duration}`
+            + '&version_code=170400&version_name=17.4.0&cookie_enabled=true'
+            + '&screen_width=1920&screen_height=1080&browser_language=zh-CN&browser_platform=Win32&browser_name=Chrome';
+
+        try {
+            const json = JSON.parse(await this.fetchEngineText(path));
+            const items = (json.danmaku_list || [])
+                .filter((d) => d && d.text && !d.is_ad)
+                .map((d) => ({
+                    id: String(d.danmaku_id || ''),
+                    text: String(d.text),
+                    offsetMs: Number(d.offset_time) || 0,
+                    diggCount: d.digg_count || 0
+                }))
+                .sort((a, b) => a.offsetMs - b.offsetMs);
+            return {
+                items,
+                startMs: Number(json.start_time) || start,
+                endMs: Number(json.end_time) || end,
+                total: Number(json.total) || 0,
+                ok: json.status_code === 0
+            };
+        } catch (err) {
+            console.error('[DouyinEngine] fetchDanmaku error:', err.message);
+            return { items: [], startMs: start, endMs: end, total: 0, ok: false };
+        }
+    }
+
     formatAwemeItem(raw) {
         const v = raw.video || {};
         const isHorizontal = !v.width || !v.height || v.width >= v.height;
@@ -461,8 +578,12 @@ class DouyinEngine {
         const avatarUrl = author.avatar_medium?.url_list?.[0] || author.avatar_thumb?.url_list?.[0] || null;
 
         const stats = raw.statistics || {};
+        const danmakuControl = raw.danmaku_control || null;
 
         return {
+            // null = unknown (the list API did not say), so the client still tries
+            danmakuCount: danmakuControl && typeof danmakuControl.danmaku_cnt === 'number' ? danmakuControl.danmaku_cnt : null,
+            danmakuEnabled: danmakuControl ? danmakuControl.enable_danmaku !== false : true,
             awemeId: raw.aweme_id,
             desc: raw.desc || '',
             createTime: raw.create_time,

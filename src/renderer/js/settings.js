@@ -11,7 +11,13 @@ class SettingsManager {
             seekStepSeconds: 10,
             fillScreen: true,
             autoCheckUpdate: true,
-            exitPureOnEdge: true
+            exitPureOnEdge: true,
+            dedupeFeed: true,
+            playbackSpeed: 1.0,
+            danmakuEnabled: true,
+            danmakuOpacity: 0.85,
+            danmakuArea: 0.5,
+            danmakuFontSize: 22
         };
         this.state = this.load();
     }

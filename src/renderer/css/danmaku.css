@@ -1,0 +1,50 @@
+/* Scrolling danmaku (bullet comments) — above the video, below the click layer */
+.danmaku-layer {
+    --danmaku-font-size: 22px;
+    position: absolute;
+    top: 52px; /* keep clear of the title bar */
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 5;
+    overflow: hidden;
+    pointer-events: none;
+    contain: strict;
+}
+
+.danmaku-item {
+    position: absolute;
+    top: 0;
+    left: 0;
+    white-space: nowrap;
+    font-size: var(--danmaku-font-size);
+    line-height: 1.55;
+    font-weight: 600;
+    color: #fff;
+    text-shadow:
+        1px 0 1px rgba(0, 0, 0, 0.85),
+        -1px 0 1px rgba(0, 0, 0, 0.85),
+        0 1px 1px rgba(0, 0, 0, 0.85),
+        0 -1px 1px rgba(0, 0, 0, 0.85);
+    will-change: transform;
+    user-select: none;
+}
+
+/* Title bar toggle */
+.danmaku-btn-glyph {
+    font-size: 13px;
+    font-weight: 700;
+    line-height: 1;
+}
+
+.tool-btn:not(.active) .danmaku-btn-glyph {
+    text-decoration: line-through;
+    opacity: 0.7;
+}
+
+/* Settings chips (display area / font size) */
+.danmaku-chips {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+}
