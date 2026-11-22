@@ -6,10 +6,27 @@ public struct MainView: View {
     
     @State private var items: [AwemeItem] = []
     @State private var currentIndex: Int = 0
+    @State private var feedTask: Task<Void, Never>?
+    @State private var feedGeneration = 0
+    @State private var feedMessage: String?
+    @State private var queueChannel: FeedChannel?
+    @State private var advanceWhenLoaded = false
     @State private var isPaused: Bool = false
     @State private var isMuted: Bool = false
     @State private var currentProgress: Double = 0.0
     
+    // Selection can get ahead of the display while a new stream decodes.
+    @State private var displayedItem: AwemeItem?
+    @State private var failedID: String?
+    @State private var standardStreamID: String?
+    @State private var retryID = 0
+    @State private var showWaitHint = false
+    @State private var eventMonitor: Any?
+    private enum HoldInput { case arrow, mouse }
+    @State private var holdInput: HoldInput?
+    @State private var boostTimer: Timer?
+    @State private var boosting = false
+
     // Display & Window state
     @State private var fillScreen: Bool = true
     @State private var isFullScreen: Bool = false
@@ -52,6 +69,42 @@ public struct MainView: View {
         return items[currentIndex]
     }
     
+    private func playbackURL(for item: AwemeItem) -> URL? {
+        if preferHighestQuality && standardStreamID != item.id {
+            return item.highestQualityUrl
+        }
+        return item.video?.playUrl ?? item.highestQualityUrl
+    }
+
+    private var followingURL: URL? {
+        let next = currentIndex + 1
+        return items.indices.contains(next) ? playbackURL(for: items[next]) : nil
+    }
+
+    @ViewBuilder
+    private func playbackStatus(for item: AwemeItem) -> some View {
+        if failedID == item.id {
+            VStack(spacing: 10) {
+                Text("这条视频暂时无法播放")
+                HStack {
+                    Button("重试") { failedID = nil; standardStreamID = nil; retryID += 1 }
+                    Button("下一条") { nextVideo() }
+                }
+            }
+            .padding(14)
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
+        } else if displayedItem == nil || (showWaitHint && displayedItem?.id != item.id) {
+            HStack(spacing: 8) {
+                ProgressView().controlSize(.small)
+                Text(displayedItem == nil ? "正在准备第一帧…" : "正在缓冲视频…")
+            }
+            .font(.callout)
+            .padding(12)
+            .background(.regularMaterial, in: Capsule())
+            .allowsHitTesting(false)
+        }
+    }
+
     public var body: some View {
         ZStack {
             Color.black.ignoresSafeArea()
@@ -59,10 +112,28 @@ public struct MainView: View {
             if let item = currentItem {
                 // Video Player Layer
                 VideoPlayerView(
-                    url: preferHighestQuality ? item.highestQualityUrl : item.video?.playUrl,
+                    url: playbackURL(for: item),
+                    nextURL: followingURL,
+                    pageIndex: currentIndex,
+                    retryID: retryID,
                     isPlaying: !isPaused,
                     isMuted: isMuted,
-                    fillScreen: fillScreen
+                    fillScreen: fillScreen,
+                    playbackRate: boosting ? 2 : 1,
+                    onDisplay: { url in
+                        guard let selected = currentItem, playbackURL(for: selected) == url else { return }
+                        displayedItem = selected
+                        failedID = nil
+                        showWaitHint = false
+                    },
+                    onFailure: { url in
+                        guard let selected = currentItem, playbackURL(for: selected) == url else { return }
+                        if preferHighestQuality, let fallback = selected.video?.playUrl, fallback != url {
+                            standardStreamID = selected.id
+                        } else {
+                            failedID = selected.id
+                        }
+                    }
                 ) { current, total in
                     self.currentTime = current
                     self.totalDuration = total
@@ -71,36 +142,52 @@ public struct MainView: View {
                     }
                 }
                 .ignoresSafeArea()
-                .id(item.awemeId) // Recreate player for new video
+                .task(id: item.id) {
+                    showWaitHint = false
+                    try? await Task.sleep(nanoseconds: 400_000_000)
+                    guard !Task.isCancelled, displayedItem?.id != item.id else { return }
+                    showWaitHint = true
+                }
                 
                 // Action & Metadata Overlay
-                VideoActionOverlay(
-                    aweme: item,
-                    isPaused: isPaused,
-                    progress: currentProgress,
-                    isControlsVisible: isControlsVisible,
-                    isPureMode: isPureMode,
-                    onTogglePlay: {
-                        isPaused.toggle()
-                        resetControlsTimer()
-                    },
-                    onOpenComment: {
-                        showCommentSheet.toggle()
-                    },
-                    onToggleFullScreen: {
-                        toggleFullScreen()
-                    }
-                )
+                if let visible = displayedItem {
+                    VideoActionOverlay(
+                        aweme: visible,
+                        isPaused: isPaused,
+                        progress: currentProgress,
+                        isControlsVisible: isControlsVisible,
+                        isPureMode: isPureMode,
+                        onTogglePlay: {
+                            isPaused.toggle()
+                            resetControlsTimer()
+                        },
+                        onOpenComment: {
+                            showCommentSheet.toggle()
+                        },
+                        onToggleFullScreen: {
+                            toggleFullScreen()
+                        }
+                    )
+                    .id(visible.id) // Reset only the overlay, never the playback surface.
+                }
+                playbackStatus(for: item)
+                if boosting {
+                    VStack {
+                        Text("2× 倍速播放").font(.caption.bold()).padding(8)
+                            .background(.regularMaterial, in: Capsule())
+                        Spacer()
+                    }.padding(.top, 50).allowsHitTesting(false)
+                }
             } else {
                 // Loading or Empty State
                 VStack(spacing: 16) {
                     ProgressView()
                         .scaleEffect(1.2)
-                    Text(engine.statusMessage)
+                    Text(feedMessage ?? engine.statusMessage)
                         .font(.system(size: 14, weight: .medium))
                         .foregroundColor(.white.opacity(0.8))
                     
-                    if !engine.isLoading && items.isEmpty && engine.isReady {
+                    if feedTask == nil && items.isEmpty {
                         Button("点击刷新视频流") {
                             loadFeed(reset: true)
                         }
@@ -319,7 +406,7 @@ public struct MainView: View {
             }
             
             // Side Drawer Comment Overlay
-            if showCommentSheet, let item = currentItem {
+            if showCommentSheet, let item = displayedItem {
                 HStack {
                     Spacer()
                     CommentSheetView(awemeId: item.awemeId) {
@@ -358,10 +445,30 @@ public struct MainView: View {
             } else {
                 resetControlsTimer()
             }
-            Task {
-                await engine.waitUntilReady()
-                loadFeed()
-            }
+            if items.isEmpty { loadFeed() }
+        }
+        .onDisappear {
+            cancelFeedRequest()
+        }
+        .onDisappear {
+            cancelBoost()
+            if let eventMonitor { NSEvent.removeMonitor(eventMonitor) }
+            eventMonitor = nil
+            autoHideTimer?.invalidate()
+            seekToastTimer?.invalidate()
+        }
+        .onChange(of: currentItem?.id) { newID in
+            cancelBoost()
+            if failedID != newID { failedID = nil }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didResignActiveNotification)) { _ in
+            cancelBoost()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didResignKeyNotification)) { _ in
+            cancelBoost()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: Notification.Name("MacDVForwardStep"))) { _ in
+            if !showSettingsSheet && !showLoginSheet { seekVideo(by: Double(seekStepSeconds)) }
         }
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.didEnterFullScreenNotification)) { _ in
             self.isFullScreen = true
@@ -395,81 +502,125 @@ public struct MainView: View {
     }
     
     // MARK: - Actions & Navigation
+    private func selectVideo(_ index: Int) {
+        guard items.indices.contains(index) else { return }
+        currentIndex = index
+        currentTime = 0
+        totalDuration = 0
+        currentProgress = 0
+        isPaused = false
+        if !isPureMode { resetControlsTimer() }
+    }
+
     private func nextVideo() {
-        if currentIndex < items.count - 1 {
-            withAnimation(.easeInOut(duration: 0.2)) {
-                currentIndex += 1
-                currentTime = 0
-                totalDuration = 0
-                currentProgress = 0
-                isPaused = false
-            }
-            if !isPureMode { resetControlsTimer() }
-            // Auto prefetch when 3 items left
-            if currentIndex >= items.count - 3 {
-                loadMoreFeed()
-            }
+        guard queueChannel == engine.currentChannel, !items.isEmpty else {
+            if feedTask == nil { loadFeed(reset: true) }
+            return
+        }
+        if currentIndex + 1 < items.count {
+            advanceWhenLoaded = false
+            selectVideo(currentIndex + 1)
+            if currentIndex >= items.count - 3 { loadMoreFeed() }
         } else {
-            loadFeed()
+            // Coalesce wheel/key presses at the boundary into a single step.
+            advanceWhenLoaded = true
+            loadMoreFeed()
         }
     }
-    
+
     private func previousVideo() {
-        if currentIndex > 0 {
-            withAnimation(.easeInOut(duration: 0.2)) {
-                currentIndex -= 1
-                currentTime = 0
-                totalDuration = 0
-                currentProgress = 0
-                isPaused = false
-            }
-            if !isPureMode { resetControlsTimer() }
-        }
+        advanceWhenLoaded = false
+        if currentIndex > 0 { selectVideo(currentIndex - 1) }
     }
-    
+
+    private func cancelFeedRequest() {
+        feedGeneration &+= 1
+        feedTask?.cancel()
+        feedTask = nil
+        advanceWhenLoaded = false
+    }
+
     private func loadFeed(reset: Bool = false) {
-        Task {
+        if reset {
+            cancelFeedRequest()
+            if engine.needsNavigationRetry { engine.loadDouyinHome() }
+        }
+        requestFeed(replace: true)
+    }
+
+    private func loadMoreFeed() {
+        requestFeed(replace: false)
+    }
+
+    private func requestFeed(replace: Bool) {
+        guard feedTask == nil else { return }
+        let generation = feedGeneration
+        let channel = engine.currentChannel
+        feedMessage = replace ? "正在获取\(channel.rawValue)…" : nil
+        feedTask = Task { @MainActor in
+            var prefetchSmallFirstBatch = false
+            defer {
+                if feedGeneration == generation {
+                    feedTask = nil
+                    advanceWhenLoaded = false
+                    if prefetchSmallFirstBatch { loadMoreFeed() }
+                }
+            }
             do {
-                print("🔄 [MainView] Requesting feed (reset=\(reset))...")
-                let newItems = try await engine.fetchFeed(count: 10, reset: reset)
-                await MainActor.run {
-                    if !newItems.isEmpty {
-                        print("✅ [MainView] Loaded \(newItems.count) videos!")
-                        self.items = newItems
-                        self.currentIndex = 0
-                        self.currentProgress = 0
-                        self.isPaused = false
-                        if !self.isPureMode { self.resetControlsTimer() }
-                    } else {
-                        print("⚠️ [MainView] Feed returned empty aweme list, will retry shortly...")
-                        engine.statusMessage = "未能获取到视频流，正在重试..."
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
-                            self.loadFeed()
+                let existing = replace ? Set<String>() : Set(items.map(\.awemeId))
+                for attempt in 0..<3 {
+                    try Task.checkCancellation()
+                    guard generation == feedGeneration, channel == engine.currentChannel else { return }
+                    var known = existing
+                    let batch: [AwemeItem]
+                    do {
+                        batch = try await engine.fetchFeed(count: 10)
+                    } catch {
+                        try Task.checkCancellation()
+                        // On the first page WebKit can finish navigating before the
+                        // service returns usable JSON. Retry only that fast failure.
+                        if !DouyinEngine.canRetryWarmupFailure(error) || attempt == 2 { throw error }
+                        batch = []
+                    }
+                    try Task.checkCancellation()
+                    guard generation == feedGeneration, channel == engine.currentChannel else { return }
+                    let fresh = batch.filter { !$0.awemeId.isEmpty && known.insert($0.awemeId).inserted }
+                    if !fresh.isEmpty {
+                        feedMessage = nil
+                        if replace {
+                            // Commit only after success. Keep the current video visible
+                            // throughout a refresh, including on timeout or empty results.
+                            items = fresh
+                            queueChannel = channel
+                            selectVideo(0)
+                            prefetchSmallFirstBatch = fresh.count <= 3
+                        } else {
+                            let oldCount = items.count
+                            items.append(contentsOf: fresh)
+                            if advanceWhenLoaded && currentIndex == oldCount - 1 {
+                                selectVideo(oldCount)
+                            }
                         }
+                        return
+                    }
+                    if attempt < 2 {
+                        // The final attempt reaches the old 2.5-second warm-up
+                        // window, without charging that delay to a healthy launch.
+                        try await Task.sleep(nanoseconds: attempt == 0 ? 650_000_000 : 1_850_000_000)
                     }
                 }
+                throw NSError(domain: "MacDV.Feed", code: 1, userInfo: [
+                    NSLocalizedDescriptionKey: "暂时没有新的可播放视频"
+                ])
             } catch {
-                print("❌ [MainView] Failed to load feed: \(error)")
-                await MainActor.run {
-                    self.engine.statusMessage = "加载失败: \(error.localizedDescription)"
-                }
+                guard generation == feedGeneration, channel == engine.currentChannel, !Task.isCancelled else { return }
+                let message = "\(error.localizedDescription)，可点刷新重试"
+                feedMessage = message
+                if !items.isEmpty && (replace || advanceWhenLoaded) { triggerPureToast(message) }
             }
         }
     }
-    
-    private func loadMoreFeed() {
-        Task {
-            do {
-                let more = try await engine.fetchFeed(count: 10)
-                await MainActor.run {
-                    self.items.append(contentsOf: more)
-                }
-            } catch {
-                print("Failed to load more: \(error)")
-            }
-        }
-    }
-    
+
     private func togglePinOnTop() {
         isAlwaysOnTop.toggle()
         if let window = NSApplication.shared.windows.first {
@@ -528,7 +679,7 @@ public struct MainView: View {
     
     // MARK: - Seeking
     private func seekVideo(by delta: Double) {
-        guard currentItem != nil else { return }
+        guard let displayedItem, displayedItem.id == currentItem?.id else { return }
         let current = currentTime
         let total = totalDuration
         
@@ -598,8 +749,45 @@ public struct MainView: View {
     }
     
     // MARK: - Keyboard & Trackpad Monitors
+    private func beginHold(_ input: HoldInput) {
+        guard holdInput == nil else { return }
+        holdInput = input
+        boostTimer = Timer.scheduledTimer(withTimeInterval: 0.28, repeats: false) { _ in
+            Task { @MainActor in
+                guard holdInput == input, !isPaused, let displayedItem,
+                      displayedItem.id == currentItem?.id else { return }
+                boosting = true
+            }
+        }
+    }
+
+    private func cancelBoost() {
+        boostTimer?.invalidate()
+        boostTimer = nil
+        holdInput = nil
+        boosting = false
+    }
+
     private func setupEventMonitor() {
-        NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .scrollWheel, .mouseMoved]) { event in
+        guard eventMonitor == nil else { return }
+        eventMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .keyUp, .rightMouseDown, .rightMouseUp, .scrollWheel, .mouseMoved]) { event in
+            if event.type == .rightMouseUp && holdInput == .mouse {
+                cancelBoost()
+                return nil
+            }
+            if event.type == .keyUp && event.keyCode == 124 && holdInput == .arrow {
+                let shouldSeek = !boosting
+                cancelBoost()
+                if shouldSeek { seekVideo(by: Double(seekStepSeconds)) }
+                return nil
+            }
+            guard !showSettingsSheet, !showLoginSheet, event.window?.sheetParent == nil,
+                  !event.modifierFlags.contains(.command) else { return event }
+            if showCommentSheet, event.type == .scrollWheel { return event }
+            if event.type == .rightMouseDown && !showCommentSheet {
+                beginHold(.mouse)
+                return nil
+            }
             if event.type == .mouseMoved {
                 if !isPureMode { resetControlsTimer() }
                 return event
@@ -614,8 +802,8 @@ public struct MainView: View {
                 case 123: // Left Arrow -> Seek backward
                     seekVideo(by: -Double(seekStepSeconds))
                     return nil
-                case 124: // Right Arrow -> Seek forward
-                    seekVideo(by: Double(seekStepSeconds))
+                case 124: // Tap to seek, hold to play at 2x
+                    if !event.isARepeat { beginHold(.arrow) }
                     return nil
                 case 125, 38: // Down Arrow or 'J'
                     nextVideo()
@@ -694,10 +882,10 @@ public struct MainView: View {
                     let now = ProcessInfo.processInfo.systemUptime
                     if now - lastSwitchTimestamp > 0.45 {
                         let deltaY = event.scrollingDeltaY
-                        if deltaY < -2.0 {
+                        if deltaY < 0 {
                             lastSwitchTimestamp = now
                             nextVideo()
-                        } else if deltaY > 2.0 {
+                        } else if deltaY > 0 {
                             lastSwitchTimestamp = now
                             previousVideo()
                         }

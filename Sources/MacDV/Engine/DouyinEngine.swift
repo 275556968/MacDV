@@ -31,8 +31,10 @@ public class DouyinEngine: NSObject, ObservableObject, WKNavigationDelegate, WKU
     @Published public var horizontalOnly: Bool = true
     
     public var webView: WKWebView!
-    private var readyContinuations: [CheckedContinuation<Void, Never>] = []
-    private var seenAwemeIds: Set<String> = []
+    private var channelNavigation: WKNavigation?
+    private var navigationFailure: Error?
+    private var fetchesInFlight = 0
+    public var needsNavigationRetry: Bool { navigationFailure != nil }
     private let schemeBlocker = SafeSchemeBlocker()
     
     public override init() {
@@ -132,17 +134,17 @@ public class DouyinEngine: NSObject, ObservableObject, WKNavigationDelegate, WKU
     }
     
     public func loadChannel(_ channel: FeedChannel) {
+        navigationFailure = nil
         isReady = false
         statusMessage = "正在载入\(channel.rawValue)..."
         if let url = URL(string: channel.url) {
-            webView.load(URLRequest(url: url))
+            channelNavigation = webView.load(URLRequest(url: url))
         }
     }
     
     public func switchChannel(_ channel: FeedChannel) {
         guard currentChannel != channel else { return }
         currentChannel = channel
-        seenAwemeIds.removeAll()
         loadChannel(channel)
     }
     
@@ -193,31 +195,55 @@ public class DouyinEngine: NSObject, ObservableObject, WKNavigationDelegate, WKU
     }
     
     public func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-        // Wait 2.5s for initial JS runtime scripts (ttwid, acrawler) to settle
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { [weak self] in
-            guard let self = self else { return }
-            self.isReady = true
-            self.statusMessage = "引擎就绪"
-            self.checkLoginStatus()
-            
-            for cont in self.readyContinuations {
-                cont.resume()
-            }
-            self.readyContinuations.removeAll()
+        if isReady || navigation === channelNavigation {
+            // didFinish is the first opportunity to fetch. Retry transient or empty
+            // batches in the caller rather than delaying every successful launch.
+            isReady = true
+            navigationFailure = nil
+            statusMessage = "引擎就绪"
+            checkLoginStatus()
         }
     }
-    
-    public func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+
+    private func markNavigationFailure(_ error: Error) {
+        navigationFailure = error
+        isReady = false
         statusMessage = "加载异常: \(error.localizedDescription)"
     }
-    
-    public func waitUntilReady() async {
-        if isReady { return }
-        await withCheckedContinuation { cont in
-            readyContinuations.append(cont)
+
+    public func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+        guard navigation === channelNavigation else { return }
+        markNavigationFailure(error)
+    }
+
+    public func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+        guard navigation === channelNavigation else { return }
+        markNavigationFailure(error)
+    }
+
+    public func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        markNavigationFailure(URLError(.networkConnectionLost))
+    }
+
+    public func waitUntilReady() async throws {
+        // A cancellable, bounded wait: network failure or channel switches must
+        // never strand the UI or keep an old continuation alive.
+        let navigation = channelNavigation
+        let deadline = ContinuousClock.now.advanced(by: .seconds(15))
+        while true {
+            try Task.checkCancellation()
+            guard navigation === channelNavigation else { throw CancellationError() }
+            if isReady { return }
+            if let navigationFailure { throw navigationFailure }
+            if ContinuousClock.now >= deadline {
+                let error = URLError(.timedOut)
+                markNavigationFailure(error)
+                throw error
+            }
+            try await Task.sleep(nanoseconds: 50_000_000)
         }
     }
-    
+
     // MARK: - Check & Manage Cookies
     public func checkLoginStatus() {
         WKWebsiteDataStore.default().httpCookieStore.getAllCookies { [weak self] cookies in
@@ -296,37 +322,60 @@ public class DouyinEngine: NSObject, ObservableObject, WKNavigationDelegate, WKU
         }
         
         loadDouyinHome()
-        await waitUntilReady()
+        do { try await waitUntilReady() } catch { return false }
         checkLoginStatus()
         return isLoggedIn
     }
     
     // MARK: - Core Fetch API
-    public func fetchFeed(count: Int = 10, reset: Bool = false) async throws -> [AwemeItem] {
-        await waitUntilReady()
-        self.isLoading = true
-        defer { self.isLoading = false }
-        
-        if reset {
-            seenAwemeIds.removeAll()
+    static func canRetryWarmupFailure(_ error: Error) -> Bool {
+        if error is DecodingError { return true }
+        let native = error as NSError
+        guard native.domain == WKError.errorDomain,
+              native.code == WKError.javaScriptExceptionOccurred.rawValue,
+              let message = native.userInfo["WKJavaScriptExceptionMessage"] as? String else {
+            return false
         }
-        
+        // A just-navigated WebKit context can reject its first network fetch.
+        // Do not treat timeouts, access errors, or arbitrary JS errors as warm-up.
+        return message == "TypeError: Load failed" || message == "Load failed"
+    }
+
+    public func fetchFeed(count: Int = 10) async throws -> [AwemeItem] {
+        try await waitUntilReady()
+        let navigation = channelNavigation
+        fetchesInFlight += 1
+        isLoading = true
+        defer {
+            fetchesInFlight -= 1
+            isLoading = fetchesInFlight > 0
+        }
+
         let path = "/aweme/v1/web/tab/feed/?device_platform=webapp&aid=6383&channel=channel_pc_web&count=\(count)&version_code=170400&version_name=17.4.0&cookie_enabled=true&screen_width=1920&screen_height=1080&browser_language=zh-CN&browser_platform=MacIntel&browser_name=Safari"
         
         let js = """
-        const response = await fetch('\(path)', {
-            method: 'GET',
-            credentials: 'include',
-            headers: {
-                'Accept': 'application/json, text/plain, */*'
-            }
-        });
-        const text = await response.text();
-        return text;
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 12000);
+        try {
+            const response = await fetch('\(path)', {
+                method: 'GET',
+                signal: controller.signal,
+                credentials: 'include',
+                headers: {
+                    'Accept': 'application/json, text/plain, */*'
+                }
+            });
+            const text = await response.text();
+            return text;
+        } finally {
+            clearTimeout(timer);
+        }
         """
         
         do {
             let result = try await webView.callAsyncJavaScript(js, arguments: [:], in: nil, contentWorld: .page)
+            try Task.checkCancellation()
+            guard navigation === channelNavigation else { throw CancellationError() }
             guard let jsonString = result as? String, let data = jsonString.data(using: .utf8) else {
                 throw NSError(domain: "DouyinEngine", code: -1, userInfo: [NSLocalizedDescriptionKey: "无效响应数据"])
             }
@@ -337,28 +386,9 @@ public class DouyinEngine: NSObject, ObservableObject, WKNavigationDelegate, WKU
                 return []
             }
             
-            var validItems: [AwemeItem] = []
-            for item in list {
-                // Filter out vertical phone videos if horizontalOnly is active
-                if horizontalOnly && !item.isHorizontal {
-                    continue
-                }
-                if !seenAwemeIds.contains(item.awemeId) {
-                    seenAwemeIds.insert(item.awemeId)
-                    validItems.append(item)
-                }
-            }
-            
-            // If deduplication cleared all items, fallback to non-empty list
-            if validItems.isEmpty {
-                if horizontalOnly {
-                    validItems = list.filter { $0.isHorizontal }
-                } else {
-                    validItems = list
-                }
-            }
-            
-            return validItems
+            // Only hand playable entries to the pager. The queue owns de-duplication
+            // so a cancelled/failed refresh cannot poison future requests.
+            return list.filter { (!horizontalOnly || $0.isHorizontal) && $0.highestQualityUrl != nil }
         } catch {
             print("Fetch feed error: \(error)")
             throw error
@@ -366,7 +396,7 @@ public class DouyinEngine: NSObject, ObservableObject, WKNavigationDelegate, WKU
     }
     
     public func fetchComments(awemeId: String, cursor: Int64 = 0, count: Int = 20) async throws -> [CommentItem] {
-        await waitUntilReady()
+        try await waitUntilReady()
         
         let path = "/aweme/v1/web/comment/list/?device_platform=webapp&aid=6383&channel=channel_pc_web&aweme_id=\(awemeId)&cursor=\(cursor)&count=\(count)"
         

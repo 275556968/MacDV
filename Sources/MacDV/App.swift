@@ -36,7 +36,7 @@ struct MacDVApp: App {
                 .keyboardShortcut(.leftArrow, modifiers: [])
                 
                 Button("快进") {
-                    postKeyEvent(keyCode: 124)
+                    NotificationCenter.default.post(name: Notification.Name("MacDVForwardStep"), object: nil)
                 }
                 .keyboardShortcut(.rightArrow, modifiers: [])
                 
@@ -88,7 +88,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
         if let window = NSApplication.shared.windows.first {
-            window.title = "MacDV - 抖音 Mac 客户端 (横屏精选)"
+            let name = Bundle.main.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String ?? "MacDV"
+            window.title = "\(name)（横屏精选）"
             window.titleVisibility = .hidden
             window.titlebarAppearsTransparent = true
             window.isMovableByWindowBackground = true

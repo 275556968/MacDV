@@ -18,6 +18,14 @@
 
 ---
 
+## macOS 原生版 1.2.0
+
+上下翻页时，MacDV 静音预载下一条，等首帧解码后才移动当前画面；即使网络慢，也不会为了切页先清空播放器。触控板、鼠标滚轮和 ↑/↓ 都可翻页，系统「减弱动态效果」开启时不播放滑动动画。
+
+**安装**：从 [MacDV 发布页](https://github.com/275556968/MacDV/releases) 下载适配处理器的 macOS ZIP。退出旧版，解压并将 **MacDV.app** 拖入「应用程序」。macOS 13+；预编译包为 ad-hoc 签名，未经过 Apple 公证。源码构建运行 `./build_app.sh`，生成可独立打开的 App，不需要 Node.js 或额外的网页播放器。[安装、快捷键与回归测试说明](SMOOTH.md)
+
+---
+
 ## 💖 致谢与鸣谢 (Acknowledgements)
 
 > [!NOTE]
